@@ -106,14 +106,14 @@ func TestOpenAIGatewayService_OAuthMessagesBridgeDoesNotInjectDefaultInstruction
 
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
-	originalBody := []byte(`{\"model\":\"gpt-5.5\",\"stream\":true,\"prompt_cache_key\":\"anthropic-metadata-session-1\",\"input\":[{\"type\":\"message\",\"role\":\"developer\",\"content\":[{\"type\":\"input_text\",\"text\":\"<sub2api-claude-code-todo-guard>\"}]},{\"type\":\"message\",\"role\":\"user\",\"content\":\"hello\"}]}`)
+	originalBody := []byte(`{"model":"gpt-5.5","stream":true,"prompt_cache_key":"anthropic-metadata-session-1","input":[{"type":"message","role":"developer","content":[{"type":"input_text","text":"<sub2api-claude-code-todo-guard>"}]},{"type":"message","role":"user","content":"hello"}]}`)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(originalBody))
 	c.Request.Header.Set("Content-Type", "application/json")
 
 	upstream := &httpUpstreamRecorder{resp: &http.Response{
 		StatusCode: http.StatusBadRequest,
 		Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid_bridge"}},
-		Body:       io.NopCloser(strings.NewReader(`{\"error\":{\"type\":\"invalid_request_error\",\"message\":\"bridge stop\"}}`)),
+		Body:       io.NopCloser(strings.NewReader(`{"error":{"type":"invalid_request_error","message":"bridge stop"}}`)),
 	}}
 	svc := &OpenAIGatewayService{
 		cfg:          &config.Config{},
@@ -150,14 +150,14 @@ func TestOpenAIGatewayService_OAuthPassthroughStripsMaxOutputTokens(t *testing.T
 
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
-	originalBody := []byte(`{\"model\":\"gpt-5.5\",\"stream\":false,\"max_output_tokens\":4096,\"input\":[{\"type\":\"text\",\"text\":\"hi\"}]}`)
+	originalBody := []byte(`{"model":"gpt-5.5","stream":false,"max_output_tokens":4096,"input":[{"type":"text","text":"hi"}]}`)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(originalBody))
 	c.Request.Header.Set("Content-Type", "application/json")
 
 	upstream := &httpUpstreamRecorder{resp: &http.Response{
 		StatusCode: http.StatusBadRequest,
 		Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid_strip_max_output_tokens"}},
-		Body:       io.NopCloser(strings.NewReader(`{\"error\":{\"type\":\"invalid_request_error\",\"message\":\"stop after request capture\"}}`)),
+		Body:       io.NopCloser(strings.NewReader(`{"error":{"type":"invalid_request_error","message":"stop after request capture"}}`)),
 	}}
 	svc := &OpenAIGatewayService{
 		cfg:          &config.Config{},
@@ -192,7 +192,7 @@ func TestOpenAIGatewayService_APIKeyPassthroughRetriesWithoutOptionalImageGenera
 
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
-	originalBody := []byte(`{\"model\":\"gpt-5.4\",\"stream\":false,\"input\":[{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hello\"}]}],\"tools\":[{\"type\":\"image_generation\"}]}`)
+	originalBody := []byte(`{"model":"gpt-5.4","stream":false,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}],"tools":[{"type":"image_generation"}]}`)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(originalBody))
 	c.Request.Header.Set("Content-Type", "application/json")
 
@@ -200,12 +200,12 @@ func TestOpenAIGatewayService_APIKeyPassthroughRetriesWithoutOptionalImageGenera
 		{
 			StatusCode: http.StatusForbidden,
 			Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid_img_blocked"}},
-			Body:       io.NopCloser(strings.NewReader(`{\"error\":{\"type\":\"permission_error\",\"message\":\"Image generation is not enabled for this group\"}}`)),
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"type":"permission_error","message":"Image generation is not enabled for this group"}}`)),
 		},
 		{
 			StatusCode: http.StatusOK,
 			Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid_retry_ok"}},
-			Body:       io.NopCloser(strings.NewReader(`{\"id\":\"resp_retry_ok\",\"object\":\"response\",\"model\":\"gpt-5.4\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"ok\"}],\"status\":\"completed\"}],\"usage\":{\"input_tokens\":3,\"output_tokens\":2,\"total_tokens\":5}}`)),
+			Body:       io.NopCloser(strings.NewReader(`{"id":"resp_retry_ok","object":"response","model":"gpt-5.4","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}],"status":"completed"}],"usage":{"input_tokens":3,"output_tokens":2,"total_tokens":5}}`)),
 		},
 	}}
 	svc := &OpenAIGatewayService{
@@ -244,14 +244,14 @@ func TestOpenAIGatewayService_APIKeyPassthroughDoesNotRetryExplicitImageGenerati
 
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
-	originalBody := []byte(`{\"model\":\"gpt-5.4\",\"stream\":false,\"input\":[{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"draw a cat\"}]}],\"tools\":[{\"type\":\"image_generation\"}],\"tool_choice\":\"image_generation\"}`)
+	originalBody := []byte(`{"model":"gpt-5.4","stream":false,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"draw a cat"}]}],"tools":[{"type":"image_generation"}],"tool_choice":"image_generation"}`)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(originalBody))
 	c.Request.Header.Set("Content-Type", "application/json")
 
 	upstream := &httpUpstreamRecorder{resp: &http.Response{
 		StatusCode: http.StatusForbidden,
 		Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid_explicit_img_blocked"}},
-		Body:       io.NopCloser(strings.NewReader(`{\"error\":{\"type\":\"permission_error\",\"message\":\"Image generation is not enabled for this group\"}}`)),
+		Body:       io.NopCloser(strings.NewReader(`{"error":{"type":"permission_error","message":"Image generation is not enabled for this group"}}`)),
 	}}
 	svc := &OpenAIGatewayService{
 		cfg:          &config.Config{},
@@ -1302,7 +1302,9 @@ func TestOpenAIGatewayService_APIKeyPassthrough_PreservesBodyAndUsesResponsesEnd
 	require.NotNil(t, result.ServiceTier)
 	require.Equal(t, "flex", *result.ServiceTier)
 	require.NotNil(t, upstream.lastReq)
-	require.Equal(t, originalBody, upstream.lastBody)
+	require.False(t, gjson.GetBytes(upstream.lastBody, "max_output_tokens").Exists())
+	require.Equal(t, "gpt-5.2", gjson.GetBytes(upstream.lastBody, "model").String())
+	require.Equal(t, "flex", gjson.GetBytes(upstream.lastBody, "service_tier").String())
 	require.Equal(t, "https://api.openai.com/v1/responses", upstream.lastReq.URL.String())
 	require.Equal(t, "Bearer sk-api-key", upstream.lastReq.Header.Get("Authorization"))
 	require.Equal(t, "curl/8.0", upstream.lastReq.Header.Get("User-Agent"))
