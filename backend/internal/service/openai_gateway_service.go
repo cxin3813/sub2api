@@ -3105,15 +3105,35 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		})
 		return nil, fmt.Errorf("upstream request failed: %s", safeErr)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func(body io.Closer) { _ = body.Close() }(resp.Body)
 
 	if resp.StatusCode >= 400 {
-		// 透传模式默认保持原样代理；但 429/529 属于网关必须兜底的
-		// 上游容量类错误，应先触发多账号 failover 以维持基础 SLA。
-		if shouldFailoverOpenAIPassthroughResponse(resp.StatusCode) {
-			return nil, s.handleFailoverErrorResponsePassthrough(ctx, resp, c, account, body)
+		if resp.StatusCode == http.StatusForbidden && hasOptionalOpenAIImageGenerationTool(openAIResponsesEndpoint, reqModel, body) {
+			if retryBody, stripped := stripOptionalOpenAIImageGenerationTool(body); stripped {
+				logger.LegacyPrintf("service.openai_gateway", "[OpenAI 自动透传] 上游拒绝可选 image_generation 工具，已去工具重试: account=%d model=%s", account.ID, reqModel)
+				retryUpstreamCtx, releaseRetryUpstreamCtx := detachUpstreamContext(ctx)
+				retryReq, retryBuildErr := s.buildUpstreamRequestOpenAIPassthrough(retryUpstreamCtx, c, account, retryBody, token)
+				releaseRetryUpstreamCtx()
+				if retryBuildErr == nil {
+					retryStart := time.Now()
+					retryResp, retryErr := s.httpUpstream.Do(retryReq, proxyURL, account.ID, account.Concurrency)
+					SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(retryStart).Milliseconds())
+					if retryErr == nil {
+						defer func(body io.Closer) { _ = body.Close() }(retryResp.Body)
+						body = retryBody
+						resp = retryResp
+					}
+				}
+			}
 		}
-		return nil, s.handleErrorResponsePassthrough(ctx, resp, c, account, body)
+		if resp.StatusCode >= 400 {
+			// 透传模式默认保持原样代理；但 429/529 属于网关必须兜底的
+			// 上游容量类错误，应先触发多账号 failover 以维持基础 SLA。
+			if shouldFailoverOpenAIPassthroughResponse(resp.StatusCode) {
+				return nil, s.handleFailoverErrorResponsePassthrough(ctx, resp, c, account, body)
+			}
+			return nil, s.handleErrorResponsePassthrough(ctx, resp, c, account, body)
+		}
 	}
 
 	serviceTier := extractOpenAIServiceTierFromBody(body)
