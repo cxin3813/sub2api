@@ -122,6 +122,59 @@ func openAIJSONToolChoiceSelectsImageGeneration(choice gjson.Result) bool {
 	return false
 }
 
+func hasOptionalOpenAIImageGenerationTool(endpoint string, requestedModel string, body []byte) bool {
+	if IsImageGenerationEndpoint(endpoint) || isOpenAIImageGenerationModel(requestedModel) {
+		return false
+	}
+	if len(body) == 0 || !gjson.ValidBytes(body) {
+		return false
+	}
+	if model := strings.TrimSpace(gjson.GetBytes(body, "model").String()); isOpenAIImageGenerationModel(model) {
+		return false
+	}
+	if openAIJSONToolChoiceSelectsImageGeneration(gjson.GetBytes(body, "tool_choice")) {
+		return false
+	}
+	return openAIJSONToolsContainImageGeneration(gjson.GetBytes(body, "tools"))
+}
+
+func stripOptionalOpenAIImageGenerationTool(body []byte) ([]byte, bool) {
+	if !hasOptionalOpenAIImageGenerationTool(openAIResponsesEndpoint, "", body) {
+		return body, false
+	}
+	var reqBody map[string]any
+	if err := json.Unmarshal(body, &reqBody); err != nil {
+		return body, false
+	}
+	rawTools, ok := reqBody["tools"].([]any)
+	if !ok {
+		return body, false
+	}
+	filtered := make([]any, 0, len(rawTools))
+	removed := false
+	for _, rawTool := range rawTools {
+		toolMap, ok := rawTool.(map[string]any)
+		if ok && strings.TrimSpace(firstNonEmptyString(toolMap["type"])) == "image_generation" {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, rawTool)
+	}
+	if !removed {
+		return body, false
+	}
+	if len(filtered) == 0 {
+		delete(reqBody, "tools")
+	} else {
+		reqBody["tools"] = filtered
+	}
+	updatedBody, err := json.Marshal(reqBody)
+	if err != nil {
+		return body, false
+	}
+	return updatedBody, true
+}
+
 func openAIAnyToolChoiceSelectsImageGeneration(choice any) bool {
 	switch v := choice.(type) {
 	case string:
