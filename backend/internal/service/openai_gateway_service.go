@@ -2391,13 +2391,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		if maxOutputTokens, hasMaxOutputTokens := reqBody["max_output_tokens"]; hasMaxOutputTokens {
 			switch account.Platform {
 			case PlatformOpenAI:
-				// For OpenAI API Key, remove max_output_tokens (not supported)
-				// For OpenAI OAuth (Responses API), keep it (supported)
-				if account.Type == AccountTypeAPIKey {
-					delete(reqBody, "max_output_tokens")
-					bodyModified = true
-					markPatchDelete("max_output_tokens")
-				}
+				// OpenAI upstreams behind passthrough are not consistent here; strip the
+				// field to avoid hard 400s from accounts that reject max_output_tokens.
+				delete(reqBody, "max_output_tokens")
+				bodyModified = true
+				markPatchDelete("max_output_tokens")
 			case PlatformAnthropic:
 				// For Anthropic (Claude), convert to max_tokens
 				delete(reqBody, "max_output_tokens")
@@ -3225,6 +3223,8 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	}
 	targetURL = appendOpenAIResponsesRequestPathSuffix(targetURL, openAIResponsesRequestPathSuffix(c))
 
+	body = stripUnsupportedOpenAIPassthroughFields(body, account)
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -3460,6 +3460,31 @@ func collectOpenAIPassthroughTimeoutHeaders(h http.Header) []string {
 	}
 	sort.Strings(matched)
 	return matched
+}
+
+func stripUnsupportedOpenAIPassthroughFields(body []byte, account *Account) []byte {
+	if len(body) == 0 || account == nil {
+		return body
+	}
+	var reqBody map[string]any
+	if err := json.Unmarshal(body, &reqBody); err != nil {
+		return body
+	}
+	modified := false
+	if account.Platform == PlatformOpenAI {
+		if _, has := reqBody["max_output_tokens"]; has {
+			delete(reqBody, "max_output_tokens")
+			modified = true
+		}
+	}
+	if !modified {
+		return body
+	}
+	normalized, err := json.Marshal(reqBody)
+	if err != nil {
+		return body
+	}
+	return normalized
 }
 
 type openaiStreamingResultPassthrough struct {
