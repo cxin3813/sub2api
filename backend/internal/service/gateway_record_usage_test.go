@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -140,6 +141,148 @@ func TestGatewayServiceRecordUsage_BillingFingerprintIncludesRequestPayloadHash(
 	require.NoError(t, err)
 	require.NotNil(t, billingRepo.lastCmd)
 	require.Equal(t, payloadHash, billingRepo.lastCmd.RequestPayloadHash)
+}
+
+func TestGatewayServiceRecordUsage_CapturesGatewayBodyLog(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	bodyLogRepo := &recordUsageGatewayBodyLogRepoStub{}
+	svc := newGatewayRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})
+	svc.SetGatewayBodyLogService(newEnabledGatewayBodyLogServiceForTest(bodyLogRepo))
+
+	reqCtx, cancel := context.WithCancel(context.WithValue(context.Background(), ctxkey.ClientRequestID, "anthropic-client-body-log-1"))
+	cancel()
+
+	err := svc.RecordUsage(reqCtx, &RecordUsageInput{
+		Result: &ForwardResult{
+			RequestID:           "resp_body_log_gateway",
+			Usage:               ClaudeUsage{},
+			Model:               "claude-sonnet-4",
+			ResponseBody:        []byte(`{"id":"resp_body_log_gateway"}`),
+			ResponseHeaders:     http.Header{"Content-Type": []string{"application/json"}, "X-Request-Id": []string{"upstream-anthropic-1"}},
+			ResponseContentType: "application/json",
+			StatusCode:          http.StatusOK,
+			Duration:            time.Second,
+		},
+		APIKey:             &APIKey{ID: 501, Quota: 100, Group: &Group{RateMultiplier: 1}},
+		User:               &User{ID: 601},
+		Account:            &Account{ID: 701, Platform: PlatformAnthropic},
+		InboundEndpoint:    "/v1/messages",
+		UpstreamEndpoint:   "/v1/messages",
+		RequestMethod:      http.MethodPost,
+		RequestPath:        "/v1/messages",
+		RequestContentType: "application/json",
+		RequestHeaderJSON: MarshalGatewayBodyLogHeaders(http.Header{
+			"Content-Type":        []string{"application/json"},
+			"Authorization":       []string{"Bearer sk-anthropic-secret"},
+			"X-Client-Request-ID": []string{"anthropic-client-body-log-1"},
+		}),
+		RequestBody:   []byte(`{"model":"claude-sonnet-4","messages":[]}`),
+		APIKeyService: &openAIRecordUsageAPIKeyQuotaStub{},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, bodyLogRepo.calls)
+	require.NoError(t, bodyLogRepo.lastCtxErr)
+	require.NotNil(t, bodyLogRepo.lastLog)
+	require.Equal(t, usageRepo.lastLog.ID, bodyLogRepo.lastLog.UsageLogID)
+	require.Equal(t, "client:anthropic-client-body-log-1", bodyLogRepo.lastLog.RequestID)
+	require.Equal(t, int64(501), bodyLogRepo.lastLog.APIKeyID)
+	require.Equal(t, PlatformAnthropic, bodyLogRepo.lastLog.Platform)
+	require.Equal(t, http.MethodPost, bodyLogRepo.lastLog.RequestMethod)
+	require.Equal(t, "/v1/messages", bodyLogRepo.lastLog.RequestPath)
+	require.Equal(t, "/v1/messages", *bodyLogRepo.lastLog.InboundEndpoint)
+	require.Equal(t, "/v1/messages", *bodyLogRepo.lastLog.UpstreamEndpoint)
+	require.Equal(t, "anthropic-client-body-log-1", bodyLogRepo.lastLog.ClientRequestID)
+	require.Equal(t, "application/json", bodyLogRepo.lastLog.RequestContentType)
+	require.Equal(t, "application/json", bodyLogRepo.lastLog.ResponseContentType)
+	require.Equal(t, http.StatusOK, bodyLogRepo.lastLog.StatusCode)
+	require.Equal(t, []byte(`{"model":"claude-sonnet-4","messages":[]}`), bodyLogRepo.lastLog.RequestBody)
+	require.Equal(t, []byte(`{"id":"resp_body_log_gateway"}`), bodyLogRepo.lastLog.ResponseBody)
+	require.Equal(t, RequestTypeSync, bodyLogRepo.lastLog.RequestType)
+	require.JSONEq(t, `{"authorization":["Bearer [redacted]"],"content-type":["application/json"],"x-client-request-id":["anthropic-client-body-log-1"]}`, string(bodyLogRepo.lastLog.RequestHeaderJSON))
+	require.JSONEq(t, `{"content-type":["application/json"],"x-request-id":["upstream-anthropic-1"]}`, string(bodyLogRepo.lastLog.ResponseHeaderJSON))
+}
+
+func TestGatewayServiceRecordUsage_CapturesForwardedRequestBodyFromResult(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true, assignedID: 8080}
+	bodyLogRepo := &recordUsageGatewayBodyLogRepoStub{}
+	svc := newGatewayRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})
+	svc.SetGatewayBodyLogService(newEnabledGatewayBodyLogServiceForTest(bodyLogRepo))
+
+	err := svc.RecordUsage(context.Background(), &RecordUsageInput{
+		Result: &ForwardResult{
+			RequestID:    "resp_forwarded_body_gateway",
+			Usage:        ClaudeUsage{},
+			Model:        "claude-sonnet-4",
+			RequestBody:  []byte(`{"model":"mapped-upstream","messages":[]}`),
+			ResponseBody: []byte(`{"id":"resp_forwarded_body_gateway"}`),
+			StatusCode:   http.StatusOK,
+			Duration:     time.Second,
+		},
+		APIKey:             &APIKey{ID: 507, Quota: 100, Group: &Group{RateMultiplier: 1}},
+		User:               &User{ID: 607},
+		Account:            &Account{ID: 707, Platform: PlatformAnthropic},
+		RequestMethod:      http.MethodPost,
+		RequestPath:        "/v1/messages",
+		RequestContentType: "application/json",
+		RequestBody:        []byte(`{"model":"client-model","messages":[]}`),
+		APIKeyService:      &openAIRecordUsageAPIKeyQuotaStub{},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, bodyLogRepo.calls)
+	require.Equal(t, int64(8080), bodyLogRepo.lastLog.UsageLogID)
+	require.Equal(t, []byte(`{"model":"mapped-upstream","messages":[]}`), bodyLogRepo.lastLog.RequestBody)
+}
+
+func TestGatewayServiceRecordUsage_SkipsBodyLogWhenUsageLogIDMissing(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: false, err: MarkUsageLogCreateDropped(context.Canceled)}
+	bodyLogRepo := &recordUsageGatewayBodyLogRepoStub{}
+	svc := newGatewayRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})
+	svc.SetGatewayBodyLogService(newEnabledGatewayBodyLogServiceForTest(bodyLogRepo))
+
+	err := svc.RecordUsage(context.Background(), &RecordUsageInput{
+		Result: &ForwardResult{
+			RequestID: "resp_body_log_no_usage_id_gateway",
+			Usage:     ClaudeUsage{},
+			Model:     "claude-sonnet-4",
+			Duration:  time.Second,
+		},
+		APIKey:        &APIKey{ID: 508, Quota: 100, Group: &Group{RateMultiplier: 1}},
+		User:          &User{ID: 608},
+		Account:       &Account{ID: 708, Platform: PlatformAnthropic},
+		APIKeyService: &openAIRecordUsageAPIKeyQuotaStub{},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 0, bodyLogRepo.calls)
+}
+
+func TestGatewayServiceRecordUsage_BodyLogEnabledUsesUsageCreateForReturnedID(t *testing.T) {
+	usageRepo := &recordUsageBestEffortIDLogRepoStub{assignedID: 8104}
+	bodyLogRepo := &recordUsageGatewayBodyLogRepoStub{}
+	svc := newGatewayRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})
+	svc.SetGatewayBodyLogService(newEnabledGatewayBodyLogServiceForTest(bodyLogRepo))
+
+	err := svc.RecordUsage(context.Background(), &RecordUsageInput{
+		Result: &ForwardResult{
+			RequestID: "resp_body_log_create_path_gateway",
+			Usage:     ClaudeUsage{},
+			Model:     "claude-sonnet-4",
+			Duration:  time.Second,
+		},
+		APIKey:        &APIKey{ID: 509, Quota: 100, Group: &Group{RateMultiplier: 1}},
+		User:          &User{ID: 609},
+		Account:       &Account{ID: 709, Platform: PlatformAnthropic},
+		APIKeyService: &openAIRecordUsageAPIKeyQuotaStub{},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 0, usageRepo.bestEffortCalls)
+	require.Equal(t, 1, usageRepo.createCalls)
+	require.Equal(t, 1, bodyLogRepo.calls)
+	require.NotNil(t, bodyLogRepo.lastLog)
+	require.Equal(t, int64(8104), bodyLogRepo.lastLog.UsageLogID)
 }
 
 func TestGatewayServiceRecordUsage_BillingFingerprintFallsBackToContextRequestID(t *testing.T) {

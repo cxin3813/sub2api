@@ -273,6 +273,10 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		clientIP := ip.GetClientIP(c)
 		inboundEndpoint := GetInboundEndpoint(c)
 		upstreamEndpoint := resolveRawCCUpstreamEndpoint(c, account)
+		requestMethod := c.Request.Method
+		requestPath := c.Request.URL.Path
+		requestContentType := c.GetHeader("Content-Type")
+		requestHeaderJSON := service.MarshalGatewayBodyLogHeaders(c.Request.Header)
 
 		h.submitOpenAIUsageRecordTask(c.Request.Context(), result, func(ctx context.Context) {
 			if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
@@ -283,6 +287,11 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 				Subscription:       subscription,
 				InboundEndpoint:    inboundEndpoint,
 				UpstreamEndpoint:   upstreamEndpoint,
+				RequestMethod:      requestMethod,
+				RequestPath:        requestPath,
+				RequestContentType: requestContentType,
+				RequestHeaderJSON:  requestHeaderJSON,
+				RequestBody:        forwardBody,
 				UserAgent:          userAgent,
 				IPAddress:          clientIP,
 				APIKeyService:      h.apiKeyService,

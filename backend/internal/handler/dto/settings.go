@@ -187,6 +187,12 @@ type SystemSettings struct {
 	OpenAICodexUserAgent               string `json:"openai_codex_user_agent"`
 	OpenAIAllowClaudeCodeCodexPlugin   bool   `json:"openai_allow_claude_code_codex_plugin"`
 
+	// Gateway body logging
+	GatewayBodyLogEnabled         bool `json:"gateway_body_log_enabled"`
+	GatewayBodyLogMaxBytes        int  `json:"gateway_body_log_max_bytes"`
+	GatewayBodyLogCaptureRequest  bool `json:"gateway_body_log_capture_request"`
+	GatewayBodyLogCaptureResponse bool `json:"gateway_body_log_capture_response"`
+
 	// Web Search Emulation
 	WebSearchEmulationEnabled bool `json:"web_search_emulation_enabled"`
 

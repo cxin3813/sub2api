@@ -93,6 +93,17 @@ func ProvideAdminSettingHandler(settingService *service.SettingService, emailSer
 	return h
 }
 
+// ProvideAdminUsageHandler wires optional gateway body log support into the admin usage handler.
+func ProvideAdminUsageHandler(
+	usageService *service.UsageService,
+	apiKeyService *service.APIKeyService,
+	adminService service.AdminService,
+	cleanupService *service.UsageCleanupService,
+	bodyLogService *service.GatewayBodyLogService,
+) *admin.UsageHandler {
+	return admin.NewUsageHandler(usageService, apiKeyService, adminService, cleanupService, bodyLogService)
+}
+
 // ProvideHandlers creates the Handlers struct
 func ProvideHandlers(
 	authHandler *AuthHandler,
@@ -172,7 +183,7 @@ var ProviderSet = wire.NewSet(
 	admin.NewOpsHandler,
 	ProvideSystemHandler,
 	admin.NewSubscriptionHandler,
-	admin.NewUsageHandler,
+	ProvideAdminUsageHandler,
 	admin.NewUserAttributeHandler,
 	admin.NewErrorPassthroughHandler,
 	admin.NewTLSFingerprintProfileHandler,

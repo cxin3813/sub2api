@@ -3961,6 +3961,84 @@
                 </div>
                 <Toggle v-model="form.openai_allow_claude_code_codex_plugin" />
               </div>
+
+              <div class="space-y-5 border-t border-gray-100 pt-5 dark:border-dark-700">
+                <div>
+                  <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
+                    {{ t("admin.settings.gatewayForwarding.bodyLogTitle") }}
+                  </h3>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.gatewayForwarding.bodyLogDescription") }}
+                  </p>
+                </div>
+
+                <div class="flex items-center justify-between">
+                  <div>
+                    <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      {{ t("admin.settings.gatewayForwarding.bodyLogEnabled") }}
+                    </label>
+                    <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.gatewayForwarding.bodyLogEnabledHint") }}
+                    </p>
+                  </div>
+                  <Toggle
+                    v-model="form.gateway_body_log_enabled"
+                    data-testid="gateway-body-log-enabled"
+                  />
+                </div>
+
+                <div
+                  v-if="form.gateway_body_log_enabled"
+                  class="space-y-4 border-t border-gray-100 pt-4 dark:border-dark-700"
+                >
+                  <div>
+                    <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      {{ t("admin.settings.gatewayForwarding.bodyLogMaxBytes") }}
+                    </label>
+                    <input
+                      v-model.number="form.gateway_body_log_max_bytes"
+                      data-testid="gateway-body-log-max-bytes"
+                      type="number"
+                      min="1"
+                      max="1048576"
+                      class="input w-40"
+                    />
+                    <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.gatewayForwarding.bodyLogMaxBytesHint") }}
+                    </p>
+                  </div>
+
+                  <div class="flex items-center justify-between">
+                    <div>
+                      <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                        {{ t("admin.settings.gatewayForwarding.bodyLogCaptureRequest") }}
+                      </label>
+                      <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                        {{ t("admin.settings.gatewayForwarding.bodyLogCaptureRequestHint") }}
+                      </p>
+                    </div>
+                    <Toggle
+                      v-model="form.gateway_body_log_capture_request"
+                      data-testid="gateway-body-log-capture-request"
+                    />
+                  </div>
+
+                  <div class="flex items-center justify-between">
+                    <div>
+                      <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                        {{ t("admin.settings.gatewayForwarding.bodyLogCaptureResponse") }}
+                      </label>
+                      <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                        {{ t("admin.settings.gatewayForwarding.bodyLogCaptureResponseHint") }}
+                      </p>
+                    </div>
+                    <Toggle
+                      v-model="form.gateway_body_log_capture_response"
+                      data-testid="gateway-body-log-capture-response"
+                    />
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
           <!-- Web Search Emulation -->
@@ -7176,6 +7254,10 @@ const form = reactive<SettingsForm>({
   antigravity_user_agent_version: "",
   openai_codex_user_agent: "",
   openai_allow_claude_code_codex_plugin: false,
+  gateway_body_log_enabled: false,
+  gateway_body_log_max_bytes: 262144,
+  gateway_body_log_capture_request: true,
+  gateway_body_log_capture_response: true,
   // 余额、订阅到期与账号限额通知
   balance_low_notify_enabled: false,
   balance_low_notify_threshold: 0,
@@ -8282,6 +8364,11 @@ async function saveSettings() {
       openai_codex_user_agent:
         form.openai_codex_user_agent?.trim() || "",
       openai_allow_claude_code_codex_plugin: form.openai_allow_claude_code_codex_plugin,
+      gateway_body_log_enabled: form.gateway_body_log_enabled,
+      gateway_body_log_max_bytes:
+        Math.max(1, Math.floor(Number(form.gateway_body_log_max_bytes) || 262144)),
+      gateway_body_log_capture_request: form.gateway_body_log_capture_request,
+      gateway_body_log_capture_response: form.gateway_body_log_capture_response,
       // Payment configuration
       payment_enabled: form.payment_enabled,
       risk_control_enabled: form.risk_control_enabled,

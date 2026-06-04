@@ -1,12 +1,13 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
+import { defineComponent, h } from 'vue'
 
 import UsageView from '../UsageView.vue'
 
-const { list, getStats, getSnapshotV2, getById } = vi.hoisted(() => {
-  vi.stubGlobal('localStorage', {
-    getItem: vi.fn(() => null),
-    setItem: vi.fn(),
+const { list, getStats, getSnapshotV2, getModelStats, getById, getBodyLog, showError } = vi.hoisted(() => {
+	vi.stubGlobal('localStorage', {
+		getItem: vi.fn(() => null),
+		setItem: vi.fn(),
     removeItem: vi.fn(),
   })
 
@@ -14,8 +15,11 @@ const { list, getStats, getSnapshotV2, getById } = vi.hoisted(() => {
     list: vi.fn(),
     getStats: vi.fn(),
     getSnapshotV2: vi.fn(),
-    getById: vi.fn(),
-  }
+		getModelStats: vi.fn(),
+		getById: vi.fn(),
+		getBodyLog: vi.fn(),
+		showError: vi.fn(),
+	}
 })
 
 const messages: Record<string, string> = {
@@ -23,6 +27,7 @@ const messages: Record<string, string> = {
   'admin.dashboard.day': 'Day',
   'admin.dashboard.hour': 'Hour',
   'admin.usage.failedToLoadUser': 'Failed to load user',
+  'admin.usage.failedToLoadBodyLog': 'Failed to load body log',
 }
 
 const formatLocalDate = (date: Date): string => {
@@ -37,9 +42,11 @@ vi.mock('@/api/admin', () => ({
     usage: {
       list,
       getStats,
+      getBodyLog,
     },
     dashboard: {
       getSnapshotV2,
+      getModelStats,
     },
     users: {
       getById,
@@ -54,11 +61,11 @@ vi.mock('@/api/admin/usage', () => ({
 }))
 
 vi.mock('@/stores/app', () => ({
-  useAppStore: () => ({
-    showError: vi.fn(),
-    showWarning: vi.fn(),
-    showSuccess: vi.fn(),
-    showInfo: vi.fn(),
+	useAppStore: () => ({
+		showError,
+		showWarning: vi.fn(),
+		showSuccess: vi.fn(),
+		showInfo: vi.fn(),
   }),
 }))
 
@@ -105,13 +112,64 @@ const GroupDistributionChartStub = {
   `,
 }
 
+const UsageTableBodyLogStub = defineComponent({
+  props: {
+    data: {
+      type: Array,
+      default: () => [],
+    },
+  },
+  emits: ['bodyLogClick'],
+  setup(props, { emit }) {
+    return () =>
+      h(
+        'button',
+        {
+          class: 'body-log-trigger',
+          onClick: () => emit('bodyLogClick', (props.data as Array<Record<string, unknown>>)[0]),
+        },
+        'open body log',
+      )
+  },
+})
+
+const UsageBodyLogModalStub = defineComponent({
+  props: {
+    show: {
+      type: Boolean,
+      default: false,
+    },
+    loading: {
+      type: Boolean,
+      default: false,
+    },
+    bodyLog: {
+      type: Object,
+      default: null,
+    },
+  },
+  setup(props) {
+    return () =>
+      h(
+        'div',
+        {
+          'data-test': 'body-log-modal',
+        },
+        `${props.show ? 'open' : 'closed'}|${props.loading ? 'loading' : 'idle'}|${(props.bodyLog as Record<string, unknown> | null)?.request_id ?? ''}`,
+      )
+  },
+})
+
 describe('admin UsageView distribution metric toggles', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     list.mockReset()
     getStats.mockReset()
     getSnapshotV2.mockReset()
-    getById.mockReset()
+		getModelStats.mockReset()
+		getById.mockReset()
+		getBodyLog.mockReset()
+		showError.mockReset()
 
     list.mockResolvedValue({
       items: [],
@@ -132,6 +190,15 @@ describe('admin UsageView distribution metric toggles', () => {
       trend: [],
       models: [],
       groups: [],
+    })
+    getModelStats.mockResolvedValue({
+      models: [],
+    })
+    getBodyLog.mockResolvedValue({
+      request_id: 'req-body-log-default',
+      request_body: '{}',
+      response_body: '{}',
+      status_code: 200,
     })
   })
 
@@ -193,4 +260,165 @@ describe('admin UsageView distribution metric toggles', () => {
     expect(groupChart.find('.metric').text()).toBe('actual_cost')
     expect(getSnapshotV2).toHaveBeenCalledTimes(1)
   })
+
+	it('loads usage body log details when requested from the table', async () => {
+    list.mockResolvedValueOnce({
+      items: [
+        {
+          id: 42,
+          user_id: 1,
+          api_key_id: 2,
+          account_id: null,
+          request_id: 'req-body-log-42',
+          model: 'gpt-4.1',
+          group_id: null,
+          subscription_id: null,
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_creation_tokens: 0,
+          cache_read_tokens: 0,
+          cache_creation_5m_tokens: 0,
+          cache_creation_1h_tokens: 0,
+          input_cost: 0,
+          output_cost: 0,
+          cache_creation_cost: 0,
+          cache_read_cost: 0,
+          total_cost: 0,
+          actual_cost: 0,
+          rate_multiplier: 1,
+          billing_type: 0,
+          stream: false,
+          duration_ms: 0,
+          first_token_ms: null,
+          image_count: 0,
+          image_size: null,
+          image_input_size: null,
+          image_output_size: null,
+          image_size_source: null,
+          image_size_breakdown: null,
+          user_agent: null,
+          cache_ttl_overridden: false,
+          created_at: '2026-06-03T00:00:00Z',
+        },
+      ],
+      total: 1,
+      pages: 1,
+    })
+    getBodyLog.mockResolvedValueOnce({
+      request_id: 'req-body-log-42',
+      request_body: '{"prompt":"hi"}',
+      response_body: '{"text":"ok"}',
+      status_code: 200,
+    })
+
+    const wrapper = mount(UsageView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          UsageStatsCards: true,
+          UsageFilters: UsageFiltersStub,
+          UsageTable: UsageTableBodyLogStub,
+          UsageBodyLogModal: UsageBodyLogModalStub,
+          UsageExportProgress: true,
+          UsageCleanupDialog: true,
+          UserBalanceHistoryModal: true,
+          Pagination: true,
+          Select: true,
+          DateRangePicker: true,
+          Icon: true,
+          TokenUsageTrend: true,
+          ModelDistributionChart: ModelDistributionChartStub,
+          GroupDistributionChart: GroupDistributionChartStub,
+        },
+      },
+    })
+
+    vi.advanceTimersByTime(120)
+    await flushPromises()
+
+    await wrapper.get('.body-log-trigger').trigger('click')
+    await flushPromises()
+
+    expect(getBodyLog).toHaveBeenCalledWith(42)
+    expect(wrapper.get('[data-test="body-log-modal"]').text()).toContain('open')
+		expect(wrapper.get('[data-test="body-log-modal"]').text()).toContain('req-body-log-42')
+	})
+
+	it('keeps usage body log modal open with empty state when body log is missing', async () => {
+		list.mockResolvedValueOnce({
+			items: [
+				{
+					id: 43,
+					user_id: 1,
+					api_key_id: 2,
+					account_id: null,
+					request_id: 'req-body-log-missing',
+					model: 'gpt-4.1',
+					group_id: null,
+					subscription_id: null,
+					input_tokens: 0,
+					output_tokens: 0,
+					cache_creation_tokens: 0,
+					cache_read_tokens: 0,
+					cache_creation_5m_tokens: 0,
+					cache_creation_1h_tokens: 0,
+					input_cost: 0,
+					output_cost: 0,
+					cache_creation_cost: 0,
+					cache_read_cost: 0,
+					total_cost: 0,
+					actual_cost: 0,
+					rate_multiplier: 1,
+					billing_type: 0,
+					stream: false,
+					duration_ms: 0,
+					first_token_ms: null,
+					image_count: 0,
+					image_size: null,
+					image_input_size: null,
+					image_output_size: null,
+					image_size_source: null,
+					image_size_breakdown: null,
+					user_agent: null,
+					cache_ttl_overridden: false,
+					created_at: '2026-06-03T00:00:00Z',
+				},
+			],
+			total: 1,
+			pages: 1,
+		})
+		getBodyLog.mockRejectedValueOnce({ status: 404, message: 'not found' })
+
+		const wrapper = mount(UsageView, {
+			global: {
+				stubs: {
+					AppLayout: AppLayoutStub,
+					UsageStatsCards: true,
+					UsageFilters: UsageFiltersStub,
+					UsageTable: UsageTableBodyLogStub,
+					UsageBodyLogModal: UsageBodyLogModalStub,
+					UsageExportProgress: true,
+					UsageCleanupDialog: true,
+					UserBalanceHistoryModal: true,
+					Pagination: true,
+					Select: true,
+					DateRangePicker: true,
+					Icon: true,
+					TokenUsageTrend: true,
+					ModelDistributionChart: ModelDistributionChartStub,
+					GroupDistributionChart: GroupDistributionChartStub,
+				},
+			},
+		})
+
+		vi.advanceTimersByTime(120)
+		await flushPromises()
+
+		await wrapper.get('.body-log-trigger').trigger('click')
+		await flushPromises()
+
+		expect(getBodyLog).toHaveBeenCalledWith(43)
+		expect(wrapper.get('[data-test="body-log-modal"]').text()).toContain('open|idle|')
+		expect(showError).not.toHaveBeenCalled()
+	})
 })

@@ -316,6 +316,12 @@ const (
 	SettingKeyEnableIdentityPatch = "enable_identity_patch"
 	SettingKeyIdentityPatchPrompt = "identity_patch_prompt"
 
+	// Gateway body log settings
+	SettingKeyGatewayBodyLogEnabled         = "gateway_body_log_enabled"
+	SettingKeyGatewayBodyLogMaxBytes        = "gateway_body_log_max_bytes"
+	SettingKeyGatewayBodyLogCaptureRequest  = "gateway_body_log_capture_request"
+	SettingKeyGatewayBodyLogCaptureResponse = "gateway_body_log_capture_response"
+
 	// =========================
 	// Ops Monitoring (vNext)
 	// =========================

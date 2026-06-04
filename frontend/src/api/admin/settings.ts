@@ -561,6 +561,10 @@ export interface SystemSettings {
   antigravity_user_agent_version: string;
   openai_codex_user_agent: string;
   openai_allow_claude_code_codex_plugin: boolean;
+  gateway_body_log_enabled: boolean;
+  gateway_body_log_max_bytes: number;
+  gateway_body_log_capture_request: boolean;
+  gateway_body_log_capture_response: boolean;
   web_search_emulation_enabled?: boolean;
 
   // Payment configuration
@@ -794,6 +798,10 @@ export interface UpdateSettingsRequest {
   antigravity_user_agent_version?: string;
   openai_codex_user_agent?: string;
   openai_allow_claude_code_codex_plugin?: boolean;
+  gateway_body_log_enabled?: boolean;
+  gateway_body_log_max_bytes?: number;
+  gateway_body_log_capture_request?: boolean;
+  gateway_body_log_capture_response?: boolean;
   // Payment configuration
   payment_enabled?: boolean;
   risk_control_enabled?: boolean;

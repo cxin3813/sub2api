@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ type openAIRecordUsageLogRepoStub struct {
 	UsageLogRepository
 
 	inserted   bool
+	assignedID int64
 	err        error
 	calls      int
 	lastLog    *UsageLog
@@ -26,7 +28,47 @@ func (s *openAIRecordUsageLogRepoStub) Create(ctx context.Context, log *UsageLog
 	s.calls++
 	s.lastLog = log
 	s.lastCtxErr = ctx.Err()
+	if s.err == nil && log != nil && log.ID <= 0 {
+		assignedID := s.assignedID
+		if assignedID <= 0 {
+			assignedID = int64(100000 + s.calls)
+		}
+		log.ID = assignedID
+	}
 	return s.inserted, s.err
+}
+
+type recordUsageBestEffortIDLogRepoStub struct {
+	UsageLogRepository
+
+	assignedID      int64
+	bestEffortErr   error
+	createErr       error
+	bestEffortCalls int
+	createCalls     int
+	lastLog         *UsageLog
+	lastCtxErr      error
+}
+
+func (s *recordUsageBestEffortIDLogRepoStub) CreateBestEffort(ctx context.Context, log *UsageLog) error {
+	s.bestEffortCalls++
+	s.lastLog = log
+	s.lastCtxErr = ctx.Err()
+	return s.bestEffortErr
+}
+
+func (s *recordUsageBestEffortIDLogRepoStub) Create(ctx context.Context, log *UsageLog) (bool, error) {
+	s.createCalls++
+	s.lastLog = log
+	s.lastCtxErr = ctx.Err()
+	if s.createErr == nil && log != nil && log.ID <= 0 {
+		assignedID := s.assignedID
+		if assignedID <= 0 {
+			assignedID = int64(100000 + s.createCalls)
+		}
+		log.ID = assignedID
+	}
+	return true, s.createErr
 }
 
 type openAIRecordUsageBillingRepoStub struct {
@@ -129,6 +171,99 @@ func (s *openAIUserGroupRateRepoStub) GetByUserAndGroup(ctx context.Context, use
 
 func i64p(v int64) *int64 {
 	return &v
+}
+
+type recordUsageGatewayBodyLogRepoStub struct {
+	GatewayBodyLogRepository
+
+	calls      int
+	lastLog    *GatewayBodyLog
+	lastCtxErr error
+}
+
+func (s *recordUsageGatewayBodyLogRepoStub) Upsert(ctx context.Context, log *GatewayBodyLog) error {
+	s.calls++
+	s.lastCtxErr = ctx.Err()
+	if log != nil {
+		cp := *log
+		s.lastLog = &cp
+	}
+	return nil
+}
+
+func (s *recordUsageGatewayBodyLogRepoStub) GetByUsageLogID(ctx context.Context, usageLogID int64) (*GatewayBodyLog, error) {
+	return nil, ErrGatewayBodyLogNotFound
+}
+
+func (s *recordUsageGatewayBodyLogRepoStub) DeleteBefore(ctx context.Context, before any) (int64, error) {
+	return 0, nil
+}
+
+type gatewayBodyLogSettingRepoStub struct {
+	values map[string]string
+}
+
+func (s *gatewayBodyLogSettingRepoStub) Get(ctx context.Context, key string) (*Setting, error) {
+	if value, ok := s.values[key]; ok {
+		return &Setting{Key: key, Value: value}, nil
+	}
+	return nil, ErrSettingNotFound
+}
+
+func (s *gatewayBodyLogSettingRepoStub) GetValue(ctx context.Context, key string) (string, error) {
+	if value, ok := s.values[key]; ok {
+		return value, nil
+	}
+	return "", ErrSettingNotFound
+}
+
+func (s *gatewayBodyLogSettingRepoStub) Set(ctx context.Context, key, value string) error {
+	if s.values == nil {
+		s.values = make(map[string]string)
+	}
+	s.values[key] = value
+	return nil
+}
+
+func (s *gatewayBodyLogSettingRepoStub) GetMultiple(ctx context.Context, keys []string) (map[string]string, error) {
+	result := make(map[string]string, len(keys))
+	for _, key := range keys {
+		if value, ok := s.values[key]; ok {
+			result[key] = value
+		}
+	}
+	return result, nil
+}
+
+func (s *gatewayBodyLogSettingRepoStub) SetMultiple(ctx context.Context, settings map[string]string) error {
+	if s.values == nil {
+		s.values = make(map[string]string, len(settings))
+	}
+	for key, value := range settings {
+		s.values[key] = value
+	}
+	return nil
+}
+
+func (s *gatewayBodyLogSettingRepoStub) GetAll(ctx context.Context) (map[string]string, error) {
+	result := make(map[string]string, len(s.values))
+	for key, value := range s.values {
+		result[key] = value
+	}
+	return result, nil
+}
+
+func (s *gatewayBodyLogSettingRepoStub) Delete(ctx context.Context, key string) error {
+	delete(s.values, key)
+	return nil
+}
+
+func newEnabledGatewayBodyLogServiceForTest(repo GatewayBodyLogRepository) *GatewayBodyLogService {
+	return NewGatewayBodyLogService(repo, NewSettingService(&gatewayBodyLogSettingRepoStub{values: map[string]string{
+		SettingKeyGatewayBodyLogEnabled:         "true",
+		SettingKeyGatewayBodyLogCaptureRequest:  "true",
+		SettingKeyGatewayBodyLogCaptureResponse: "true",
+	}}, &config.Config{}))
 }
 
 func newOpenAIRecordUsageServiceForTest(usageRepo UsageLogRepository, userRepo UserRepository, subRepo UserSubscriptionRepository, rateRepo UserGroupRateRepository) *OpenAIGatewayService {
@@ -241,6 +376,152 @@ func TestOpenAIGatewayServiceRecordUsage_ZeroUsageStillWritesUsageLog(t *testing
 	require.Zero(t, billingRepo.lastCmd.APIKeyQuotaCost)
 	require.Zero(t, billingRepo.lastCmd.APIKeyRateLimitCost)
 	require.Zero(t, billingRepo.lastCmd.AccountQuotaCost)
+}
+
+func TestOpenAIGatewayServiceRecordUsage_CapturesGatewayBodyLog(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
+	bodyLogRepo := &recordUsageGatewayBodyLogRepoStub{}
+	svc := newOpenAIRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+	svc.SetGatewayBodyLogService(newEnabledGatewayBodyLogServiceForTest(bodyLogRepo))
+
+	reqCtx, cancel := context.WithCancel(context.WithValue(context.Background(), ctxkey.ClientRequestID, "openai-client-body-log-1"))
+	cancel()
+
+	err := svc.RecordUsage(reqCtx, &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{
+			RequestID:           "resp_body_log_openai",
+			Usage:               OpenAIUsage{},
+			Model:               "gpt-5.1",
+			ResponseBody:        []byte(`{"id":"resp_body_log_openai"}`),
+			ResponseHeaders:     http.Header{"Content-Type": []string{"application/json"}, "X-Request-Id": []string{"upstream-openai-1"}},
+			ResponseContentType: "application/json",
+			StatusCode:          http.StatusOK,
+			Duration:            time.Second,
+		},
+		APIKey:             &APIKey{ID: 1001, Quota: 100, Group: &Group{RateMultiplier: 1}},
+		User:               &User{ID: 2001},
+		Account:            &Account{ID: 3001, Type: AccountTypeAPIKey, Platform: PlatformOpenAI},
+		InboundEndpoint:    "/v1/responses",
+		UpstreamEndpoint:   "/v1/responses",
+		RequestMethod:      http.MethodPost,
+		RequestPath:        "/openai/v1/responses",
+		RequestContentType: "application/json",
+		RequestHeaderJSON: MarshalGatewayBodyLogHeaders(http.Header{
+			"Content-Type":        []string{"application/json"},
+			"Authorization":       []string{"Bearer sk-openai-secret"},
+			"X-Client-Request-ID": []string{"openai-client-body-log-1"},
+		}),
+		RequestBody:   []byte(`{"model":"gpt-5.1","input":"hello"}`),
+		APIKeyService: &openAIRecordUsageAPIKeyQuotaStub{},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, bodyLogRepo.calls)
+	require.NoError(t, bodyLogRepo.lastCtxErr)
+	require.NotNil(t, bodyLogRepo.lastLog)
+	require.Equal(t, usageRepo.lastLog.ID, bodyLogRepo.lastLog.UsageLogID)
+	require.Equal(t, "client:openai-client-body-log-1", bodyLogRepo.lastLog.RequestID)
+	require.Equal(t, int64(1001), bodyLogRepo.lastLog.APIKeyID)
+	require.Equal(t, PlatformOpenAI, bodyLogRepo.lastLog.Platform)
+	require.Equal(t, http.MethodPost, bodyLogRepo.lastLog.RequestMethod)
+	require.Equal(t, "/openai/v1/responses", bodyLogRepo.lastLog.RequestPath)
+	require.Equal(t, "/v1/responses", *bodyLogRepo.lastLog.InboundEndpoint)
+	require.Equal(t, "/v1/responses", *bodyLogRepo.lastLog.UpstreamEndpoint)
+	require.Equal(t, "openai-client-body-log-1", bodyLogRepo.lastLog.ClientRequestID)
+	require.Equal(t, "application/json", bodyLogRepo.lastLog.RequestContentType)
+	require.Equal(t, "application/json", bodyLogRepo.lastLog.ResponseContentType)
+	require.Equal(t, http.StatusOK, bodyLogRepo.lastLog.StatusCode)
+	require.Equal(t, []byte(`{"model":"gpt-5.1","input":"hello"}`), bodyLogRepo.lastLog.RequestBody)
+	require.Equal(t, []byte(`{"id":"resp_body_log_openai"}`), bodyLogRepo.lastLog.ResponseBody)
+	require.Equal(t, RequestTypeSync, bodyLogRepo.lastLog.RequestType)
+	require.JSONEq(t, `{"authorization":["Bearer [redacted]"],"content-type":["application/json"],"x-client-request-id":["openai-client-body-log-1"]}`, string(bodyLogRepo.lastLog.RequestHeaderJSON))
+	require.JSONEq(t, `{"content-type":["application/json"],"x-request-id":["upstream-openai-1"]}`, string(bodyLogRepo.lastLog.ResponseHeaderJSON))
+}
+
+func TestOpenAIGatewayServiceRecordUsage_CapturesForwardedRequestBodyFromResult(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true, assignedID: 9001}
+	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
+	bodyLogRepo := &recordUsageGatewayBodyLogRepoStub{}
+	svc := newOpenAIRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+	svc.SetGatewayBodyLogService(newEnabledGatewayBodyLogServiceForTest(bodyLogRepo))
+
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{
+			RequestID:    "resp_forwarded_body_openai",
+			Usage:        OpenAIUsage{},
+			Model:        "gpt-5.1",
+			RequestBody:  []byte(`{"model":"mapped-upstream","input":"hello"}`),
+			ResponseBody: []byte(`{"id":"resp_forwarded_body_openai"}`),
+			StatusCode:   http.StatusOK,
+			Duration:     time.Second,
+		},
+		APIKey:             &APIKey{ID: 1003, Quota: 100, Group: &Group{RateMultiplier: 1}},
+		User:               &User{ID: 2003},
+		Account:            &Account{ID: 3003, Type: AccountTypeAPIKey, Platform: PlatformOpenAI},
+		RequestMethod:      http.MethodPost,
+		RequestPath:        "/openai/v1/responses",
+		RequestContentType: "application/json",
+		RequestBody:        []byte(`{"model":"client-model","input":"hello"}`),
+		APIKeyService:      &openAIRecordUsageAPIKeyQuotaStub{},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, bodyLogRepo.calls)
+	require.Equal(t, int64(9001), bodyLogRepo.lastLog.UsageLogID)
+	require.Equal(t, []byte(`{"model":"mapped-upstream","input":"hello"}`), bodyLogRepo.lastLog.RequestBody)
+}
+
+func TestOpenAIGatewayServiceRecordUsage_SkipsBodyLogWhenUsageLogIDMissing(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: false, err: MarkUsageLogCreateDropped(context.Canceled)}
+	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
+	bodyLogRepo := &recordUsageGatewayBodyLogRepoStub{}
+	svc := newOpenAIRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+	svc.SetGatewayBodyLogService(newEnabledGatewayBodyLogServiceForTest(bodyLogRepo))
+
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{
+			RequestID: "resp_body_log_no_usage_id_openai",
+			Usage:     OpenAIUsage{},
+			Model:     "gpt-5.1",
+			Duration:  time.Second,
+		},
+		APIKey:        &APIKey{ID: 1004, Quota: 100, Group: &Group{RateMultiplier: 1}},
+		User:          &User{ID: 2004},
+		Account:       &Account{ID: 3004, Type: AccountTypeAPIKey, Platform: PlatformOpenAI},
+		APIKeyService: &openAIRecordUsageAPIKeyQuotaStub{},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 0, bodyLogRepo.calls)
+}
+
+func TestOpenAIGatewayServiceRecordUsage_BodyLogEnabledUsesUsageCreateForReturnedID(t *testing.T) {
+	usageRepo := &recordUsageBestEffortIDLogRepoStub{assignedID: 9104}
+	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
+	bodyLogRepo := &recordUsageGatewayBodyLogRepoStub{}
+	svc := newOpenAIRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+	svc.SetGatewayBodyLogService(newEnabledGatewayBodyLogServiceForTest(bodyLogRepo))
+
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{
+			RequestID: "resp_body_log_create_path_openai",
+			Usage:     OpenAIUsage{},
+			Model:     "gpt-5.1",
+			Duration:  time.Second,
+		},
+		APIKey:        &APIKey{ID: 1005, Quota: 100, Group: &Group{RateMultiplier: 1}},
+		User:          &User{ID: 2005},
+		Account:       &Account{ID: 3005, Type: AccountTypeAPIKey, Platform: PlatformOpenAI},
+		APIKeyService: &openAIRecordUsageAPIKeyQuotaStub{},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 0, usageRepo.bestEffortCalls)
+	require.Equal(t, 1, usageRepo.createCalls)
+	require.Equal(t, 1, bodyLogRepo.calls)
+	require.NotNil(t, bodyLogRepo.lastLog)
+	require.Equal(t, int64(9104), bodyLogRepo.lastLog.UsageLogID)
 }
 
 func TestOpenAIGatewayServiceRecordUsage_MissingPricingRecordsZeroCostUsageLog(t *testing.T) {

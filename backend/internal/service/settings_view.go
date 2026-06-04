@@ -197,6 +197,12 @@ type SystemSettings struct {
 	OpenAICodexUserAgent               string // OpenAI Codex 上游完整 User-Agent；空值使用内置默认
 	OpenAIAllowClaudeCodeCodexPlugin   bool   // 全局开关：是否额外放行 Claude Code 的 Codex 插件（默认 false）
 
+	// Gateway body logging
+	GatewayBodyLogEnabled         bool
+	GatewayBodyLogMaxBytes        int
+	GatewayBodyLogCaptureRequest  bool
+	GatewayBodyLogCaptureResponse bool
+
 	// Web Search Emulation
 	WebSearchEmulationEnabled bool // 是否启用 web search 模拟
 

@@ -54,8 +54,9 @@ func TestForwardEmbeddings_APIKeyPassthroughRecordsUsageAndBatchInput(t *testing
 	upstream := &httpUpstreamRecorder{resp: &http.Response{
 		StatusCode: http.StatusOK,
 		Header: http.Header{
-			"Content-Type": []string{"application/json"},
-			"X-Request-Id": []string{"emb-rid"},
+			"Content-Type":                 []string{"application/json"},
+			"X-Request-Id":                 []string{"emb-rid"},
+			"X-Codex-Primary-Used-Percent": []string{"12"},
 		},
 		Body: io.NopCloser(strings.NewReader(`{
 			"object":"list",
@@ -93,6 +94,7 @@ func TestForwardEmbeddings_APIKeyPassthroughRecordsUsageAndBatchInput(t *testing
 	require.Equal(t, "nowledge-embedding", result.Model)
 	require.Equal(t, "jina-embeddings-v5-text-small", result.BillingModel)
 	require.Equal(t, "jina-embeddings-v5-text-small", result.UpstreamModel)
+	require.Equal(t, "12", result.ResponseHeaders.Get("x-codex-primary-used-percent"))
 	require.Equal(t, 13, result.Usage.InputTokens)
 	require.Equal(t, 0, result.Usage.OutputTokens)
 	require.Equal(t, "https://api.jina.ai/v1/embeddings", upstream.lastReq.URL.String())

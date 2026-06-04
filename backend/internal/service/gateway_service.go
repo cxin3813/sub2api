@@ -544,13 +544,18 @@ type ForwardResult struct {
 	ReasoningEffort  *string
 
 	// 图片生成计费字段（图片生成模型使用）
-	ImageCount         int    // 生成的图片数量
-	ImageSize          string // 最终计费尺寸 "1K", "2K", "4K"
-	ImageInputSize     string // 请求中的原始图片尺寸
-	ImageOutputSize    string // 上游响应中的图片尺寸
-	ImageOutputSizes   []string
-	ImageSizeSource    string
-	ImageSizeBreakdown map[string]int
+	ImageCount          int    // 生成的图片数量
+	ImageSize           string // 最终计费尺寸 "1K", "2K", "4K"
+	ImageInputSize      string // 请求中的原始图片尺寸
+	ImageOutputSize     string // 上游响应中的图片尺寸
+	ImageOutputSizes    []string
+	ImageSizeSource     string
+	ImageSizeBreakdown  map[string]int
+	ResponseHeaders     http.Header
+	RequestBody         []byte
+	ResponseBody        []byte
+	StatusCode          int
+	ResponseContentType string
 }
 
 // UpstreamFailoverError indicates an upstream error that should trigger account failover.
@@ -619,6 +624,7 @@ type GatewayService struct {
 	tlsFPProfileService   *TLSFingerprintProfileService
 	balanceNotifyService  *BalanceNotifyService
 	userPlatformQuotaRepo UserPlatformQuotaRepository
+	gatewayBodyLogService *GatewayBodyLogService
 }
 
 // NewGatewayService creates a new GatewayService
@@ -700,6 +706,13 @@ func NewGatewayService(
 		svc.initDebugGatewayBodyFile(path)
 	}
 	return svc
+}
+
+func (s *GatewayService) SetGatewayBodyLogService(bodyLogService *GatewayBodyLogService) {
+	if s == nil {
+		return
+	}
+	s.gatewayBodyLogService = bodyLogService
 }
 
 // GenerateSessionHash 从预解析请求计算粘性会话 hash
@@ -5006,6 +5019,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		Model:            originalModel, // 使用原始模型用于计费和日志
 		UpstreamModel:    mappedModel,
 		Stream:           reqStream,
+		RequestBody:      cloneBytes(body),
 		Duration:         time.Since(startTime),
 		FirstTokenMs:     firstTokenMs,
 		ClientDisconnect: clientDisconnect,
@@ -5255,6 +5269,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 		Model:            input.OriginalModel,
 		UpstreamModel:    input.RequestModel,
 		Stream:           input.RequestStream,
+		RequestBody:      cloneBytes(input.Body),
 		Duration:         time.Since(input.StartTime),
 		FirstTokenMs:     firstTokenMs,
 		ClientDisconnect: clientDisconnect,
@@ -5831,6 +5846,7 @@ func (s *GatewayService) forwardBedrock(
 		Model:            reqModel,
 		UpstreamModel:    mappedModel,
 		Stream:           reqStream,
+		RequestBody:      cloneBytes(bedrockBody),
 		Duration:         time.Since(startTime),
 		FirstTokenMs:     firstTokenMs,
 		ClientDisconnect: clientDisconnect,
@@ -8135,6 +8151,11 @@ type RecordUsageInput struct {
 	Subscription       *UserSubscription  // 可选：订阅信息
 	InboundEndpoint    string             // 入站端点（客户端请求路径）
 	UpstreamEndpoint   string             // 上游端点（标准化后的上游路径）
+	RequestMethod      string             // 原始请求方法
+	RequestPath        string             // 原始请求路径
+	RequestContentType string             // 原始请求 Content-Type
+	RequestHeaderJSON  []byte             // 脱敏后的请求头 JSON
+	RequestBody        []byte             // 原始请求体
 	UserAgent          string             // 请求的 User-Agent
 	IPAddress          string             // 请求的客户端 IP 地址
 	RequestPayloadHash string             // 请求体语义哈希，用于降低 request_id 误复用时的静默误去重风险
@@ -8581,9 +8602,9 @@ func (s *GatewayService) billingDeps() *billingDeps {
 	}
 }
 
-func writeUsageLogBestEffort(ctx context.Context, repo UsageLogRepository, usageLog *UsageLog, logKey string) {
+func writeUsageLogBestEffort(ctx context.Context, repo UsageLogRepository, usageLog *UsageLog, logKey string) bool {
 	if repo == nil || usageLog == nil {
-		return
+		return false
 	}
 	usageCtx, cancel := detachedBillingContext(ctx)
 	defer cancel()
@@ -8592,18 +8613,75 @@ func writeUsageLogBestEffort(ctx context.Context, repo UsageLogRepository, usage
 		if err := writer.CreateBestEffort(usageCtx, usageLog); err != nil {
 			logger.LegacyPrintf(logKey, "Create usage log failed: %v", err)
 			if IsUsageLogCreateDropped(err) {
-				return
+				return false
 			}
 			if _, syncErr := repo.Create(usageCtx, usageLog); syncErr != nil {
 				logger.LegacyPrintf(logKey, "Create usage log sync fallback failed: %v", syncErr)
 			}
 		}
-		return
+		return usageLog.ID > 0
 	}
 
 	if _, err := repo.Create(usageCtx, usageLog); err != nil {
 		logger.LegacyPrintf(logKey, "Create usage log failed: %v", err)
+		return false
 	}
+	return usageLog.ID > 0
+}
+
+func writeUsageLogWithReturnedID(ctx context.Context, repo UsageLogRepository, usageLog *UsageLog, logKey string) bool {
+	if repo == nil || usageLog == nil {
+		return false
+	}
+	usageCtx, cancel := detachedBillingContext(ctx)
+	defer cancel()
+	if _, err := repo.Create(usageCtx, usageLog); err != nil {
+		logger.LegacyPrintf(logKey, "Create usage log failed: %v", err)
+		return false
+	}
+	return usageLog.ID > 0
+}
+
+func shouldCaptureGatewayBodyLog(ctx context.Context, bodyLogService *GatewayBodyLogService, logKey string) bool {
+	if bodyLogService == nil {
+		return false
+	}
+	captureCtx, cancel := detachedBillingContext(ctx)
+	defer cancel()
+	enabled, err := bodyLogService.Enabled(captureCtx)
+	if err != nil {
+		logger.LegacyPrintf(logKey, "Read gateway body log settings failed: %v", err)
+		return false
+	}
+	return enabled
+}
+
+func captureGatewayBodyLogBestEffort(ctx context.Context, bodyLogService *GatewayBodyLogService, input GatewayBodyLogCaptureInput, logKey string) {
+	if bodyLogService == nil || input.UsageLog == nil {
+		return
+	}
+	captureCtx, cancel := detachedBillingContext(ctx)
+	defer cancel()
+	if err := bodyLogService.Capture(captureCtx, input); err != nil {
+		logger.LegacyPrintf(logKey, "Capture gateway body log failed: %v", err)
+	}
+}
+
+func gatewayBodyLogRequestBody(fallbackBody []byte, forwardedBody []byte) []byte {
+	if len(forwardedBody) > 0 {
+		return forwardedBody
+	}
+	return fallbackBody
+}
+
+func resolveClientRequestID(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if clientRequestID, _ := ctx.Value(ctxkey.ClientRequestID).(string); strings.TrimSpace(clientRequestID) != "" {
+		return strings.TrimSpace(clientRequestID)
+	}
+	return ""
 }
 
 // recordUsageOpts 内部选项，参数化 RecordUsage 与 RecordUsageWithLongContext 的差异点。
@@ -8630,6 +8708,11 @@ func (s *GatewayService) RecordUsage(ctx context.Context, input *RecordUsageInpu
 		Subscription:       input.Subscription,
 		InboundEndpoint:    input.InboundEndpoint,
 		UpstreamEndpoint:   input.UpstreamEndpoint,
+		RequestMethod:      input.RequestMethod,
+		RequestPath:        input.RequestPath,
+		RequestContentType: input.RequestContentType,
+		RequestHeaderJSON:  input.RequestHeaderJSON,
+		RequestBody:        input.RequestBody,
 		UserAgent:          input.UserAgent,
 		IPAddress:          input.IPAddress,
 		RequestPayloadHash: input.RequestPayloadHash,
@@ -8651,6 +8734,11 @@ type RecordUsageLongContextInput struct {
 	Subscription          *UserSubscription  // 可选：订阅信息
 	InboundEndpoint       string             // 入站端点（客户端请求路径）
 	UpstreamEndpoint      string             // 上游端点（标准化后的上游路径）
+	RequestMethod         string             // 原始请求方法
+	RequestPath           string             // 原始请求路径
+	RequestContentType    string             // 原始请求 Content-Type
+	RequestHeaderJSON     []byte             // 脱敏后的请求头 JSON
+	RequestBody           []byte             // 原始请求体
 	UserAgent             string             // 请求的 User-Agent
 	IPAddress             string             // 请求的客户端 IP 地址
 	RequestPayloadHash    string             // 请求体语义哈希，用于降低 request_id 误复用时的静默误去重风险
@@ -8673,6 +8761,11 @@ func (s *GatewayService) RecordUsageWithLongContext(ctx context.Context, input *
 		Subscription:       input.Subscription,
 		InboundEndpoint:    input.InboundEndpoint,
 		UpstreamEndpoint:   input.UpstreamEndpoint,
+		RequestMethod:      input.RequestMethod,
+		RequestPath:        input.RequestPath,
+		RequestContentType: input.RequestContentType,
+		RequestHeaderJSON:  input.RequestHeaderJSON,
+		RequestBody:        input.RequestBody,
 		UserAgent:          input.UserAgent,
 		IPAddress:          input.IPAddress,
 		RequestPayloadHash: input.RequestPayloadHash,
@@ -8695,6 +8788,11 @@ type recordUsageCoreInput struct {
 	Subscription       *UserSubscription
 	InboundEndpoint    string
 	UpstreamEndpoint   string
+	RequestMethod      string
+	RequestPath        string
+	RequestContentType string
+	RequestHeaderJSON  []byte
+	RequestBody        []byte
 	UserAgent          string
 	IPAddress          string
 	RequestPayloadHash string
@@ -8791,8 +8889,37 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		)
 	}
 
+	captureBodyLog := func() {
+		captureGatewayBodyLogBestEffort(ctx, s.gatewayBodyLogService, GatewayBodyLogCaptureInput{
+			UsageLog:            usageLog,
+			RequestBody:         gatewayBodyLogRequestBody(input.RequestBody, result.RequestBody),
+			ResponseBody:        result.ResponseBody,
+			RequestContentType:  input.RequestContentType,
+			ResponseContentType: firstNonEmpty(result.ResponseContentType, result.ResponseHeaders.Get("Content-Type")),
+			StatusCode:          result.StatusCode,
+			RequestMethod:       input.RequestMethod,
+			RequestPath:         input.RequestPath,
+			InboundEndpoint:     optionalTrimmedStringPtr(input.InboundEndpoint),
+			UpstreamEndpoint:    optionalTrimmedStringPtr(input.UpstreamEndpoint),
+			Platform:            account.Platform,
+			Model:               usageLog.Model,
+			RequestType:         usageLog.EffectiveRequestType(),
+			Stream:              usageLog.Stream,
+			ClientRequestID:     resolveClientRequestID(ctx),
+			RequestHeaderJSON:   input.RequestHeaderJSON,
+			ResponseHeaderJSON:  MarshalGatewayBodyLogHeaders(result.ResponseHeaders),
+		}, "service.gateway")
+	}
+	bodyLogEnabled := shouldCaptureGatewayBodyLog(ctx, s.gatewayBodyLogService, "service.gateway")
+
 	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
-		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
+		if bodyLogEnabled {
+			if writeUsageLogWithReturnedID(ctx, s.usageLogRepo, usageLog, "service.gateway") {
+				captureBodyLog()
+			}
+		} else {
+			writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
+		}
 		logger.LegacyPrintf("service.gateway", "[SIMPLE MODE] Usage recorded (not billed): user=%d, tokens=%d", usageLog.UserID, usageLog.TotalTokens())
 		s.deferredService.ScheduleLastUsedUpdate(account.ID)
 		return nil
@@ -8822,7 +8949,13 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	if billingErr != nil {
 		return billingErr
 	}
-	writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
+	if bodyLogEnabled {
+		if writeUsageLogWithReturnedID(ctx, s.usageLogRepo, usageLog, "service.gateway") {
+			captureBodyLog()
+		}
+	} else {
+		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
+	}
 
 	return nil
 }

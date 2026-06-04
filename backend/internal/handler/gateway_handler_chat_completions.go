@@ -290,6 +290,10 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		requestPayloadHash := service.HashUsageRequestPayload(body)
 		inboundEndpoint := GetInboundEndpoint(c)
 		upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
+		requestMethod := c.Request.Method
+		requestPath := c.Request.URL.Path
+		requestContentType := c.GetHeader("Content-Type")
+		requestHeaderJSON := service.MarshalGatewayBodyLogHeaders(c.Request.Header)
 
 		quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 		h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
@@ -302,6 +306,11 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 				Subscription:       subscription,
 				InboundEndpoint:    inboundEndpoint,
 				UpstreamEndpoint:   upstreamEndpoint,
+				RequestMethod:      requestMethod,
+				RequestPath:        requestPath,
+				RequestContentType: requestContentType,
+				RequestHeaderJSON:  requestHeaderJSON,
+				RequestBody:        forwardBody,
 				UserAgent:          userAgent,
 				IPAddress:          clientIP,
 				RequestPayloadHash: requestPayloadHash,

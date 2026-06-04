@@ -85,6 +85,36 @@ export interface AdminUsageQueryParams extends UsageQueryParams {
   sort_order?: 'asc' | 'desc'
 }
 
+export interface AdminUsageBodyLogDetail {
+  request_id: string
+  api_key_id: number
+  user_id: number
+  account_id: number
+  platform: string
+  model: string
+  request_type: string
+  stream: boolean
+  request_method: string
+  request_path: string
+  inbound_endpoint?: string | null
+  upstream_endpoint?: string | null
+  client_request_id?: string | null
+  request_content_type: string
+  response_content_type: string
+  status_code: number
+  request_headers?: Record<string, string[]> | null
+  response_headers?: Record<string, string[]> | null
+  request_body: string
+  response_body: string
+  request_body_bytes: number
+  response_body_bytes: number
+  request_body_sha256?: string | null
+  response_body_sha256?: string | null
+  request_truncated: boolean
+  response_truncated: boolean
+  storage_kind: string
+}
+
 // ==================== API Functions ====================
 
 /**
@@ -124,6 +154,11 @@ export async function getStats(params: {
   const { data } = await apiClient.get<AdminUsageStatsResponse>('/admin/usage/stats', {
     params
   })
+  return data
+}
+
+export async function getBodyLog(usageId: number): Promise<AdminUsageBodyLogDetail> {
+  const { data } = await apiClient.get<AdminUsageBodyLogDetail>(`/admin/usage/${usageId}/body-log`)
   return data
 }
 
@@ -199,6 +234,7 @@ export async function cancelCleanupTask(taskId: number): Promise<{ id: number; s
 export const adminUsageAPI = {
   list,
   getStats,
+  getBodyLog,
   searchUsers,
   searchApiKeys,
   listCleanupTasks,

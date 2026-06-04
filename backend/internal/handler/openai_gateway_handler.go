@@ -462,6 +462,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		requestPayloadHash := service.HashUsageRequestPayload(body)
 		inboundEndpoint := GetInboundEndpoint(c)
 		upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
+		requestMethod := c.Request.Method
+		requestPath := c.Request.URL.Path
+		requestContentType := c.GetHeader("Content-Type")
+		requestHeaderJSON := service.MarshalGatewayBodyLogHeaders(c.Request.Header)
 
 		// 使用量记录通过有界 worker 池提交，避免请求热路径创建无界 goroutine。
 		h.submitOpenAIUsageRecordTask(c.Request.Context(), result, func(ctx context.Context) {
@@ -473,6 +477,11 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				Subscription:       subscription,
 				InboundEndpoint:    inboundEndpoint,
 				UpstreamEndpoint:   upstreamEndpoint,
+				RequestMethod:      requestMethod,
+				RequestPath:        requestPath,
+				RequestContentType: requestContentType,
+				RequestHeaderJSON:  requestHeaderJSON,
+				RequestBody:        forwardBody,
 				UserAgent:          userAgent,
 				IPAddress:          clientIP,
 				RequestPayloadHash: requestPayloadHash,
@@ -848,6 +857,10 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		requestPayloadHash := service.HashUsageRequestPayload(body)
 		inboundEndpoint := GetInboundEndpoint(c)
 		upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
+		requestMethod := c.Request.Method
+		requestPath := c.Request.URL.Path
+		requestContentType := c.GetHeader("Content-Type")
+		requestHeaderJSON := service.MarshalGatewayBodyLogHeaders(c.Request.Header)
 
 		h.submitOpenAIUsageRecordTask(c.Request.Context(), result, func(ctx context.Context) {
 			if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
@@ -858,6 +871,11 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 				Subscription:       subscription,
 				InboundEndpoint:    inboundEndpoint,
 				UpstreamEndpoint:   upstreamEndpoint,
+				RequestMethod:      requestMethod,
+				RequestPath:        requestPath,
+				RequestContentType: requestContentType,
+				RequestHeaderJSON:  requestHeaderJSON,
+				RequestBody:        forwardBody,
 				UserAgent:          userAgent,
 				IPAddress:          clientIP,
 				RequestPayloadHash: requestPayloadHash,
@@ -1379,6 +1397,12 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			zap.Int("candidate_count", scheduleDecision.CandidateCount),
 		)
 
+		// 应用渠道模型映射到 WebSocket 首条消息
+		wsFirstMessage := firstMessage
+		if channelMappingWS.Mapped {
+			wsFirstMessage = h.gatewayService.ReplaceModelInBody(firstMessage, channelMappingWS.MappedModel)
+		}
+
 		hooks := &service.OpenAIWSIngressHooks{
 			InitialRequestModel: reqModel,
 			BeforeRequest: func(turn int, payload []byte, originalModel string) error {
@@ -1453,6 +1477,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, true, result.FirstTokenMs)
 				inboundEndpoint := GetInboundEndpoint(c)
 				upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
+				requestMethod := c.Request.Method
+				requestPath := c.Request.URL.Path
+				requestContentType := c.GetHeader("Content-Type")
+				requestHeaderJSON := service.MarshalGatewayBodyLogHeaders(c.Request.Header)
 				h.submitOpenAIUsageRecordTask(ctx, result, func(taskCtx context.Context) {
 					if err := h.gatewayService.RecordUsage(taskCtx, &service.OpenAIRecordUsageInput{
 						Result:             result,
@@ -1462,6 +1490,11 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 						Subscription:       subscription,
 						InboundEndpoint:    inboundEndpoint,
 						UpstreamEndpoint:   upstreamEndpoint,
+						RequestMethod:      requestMethod,
+						RequestPath:        requestPath,
+						RequestContentType: requestContentType,
+						RequestHeaderJSON:  requestHeaderJSON,
+						RequestBody:        wsFirstMessage,
 						UserAgent:          userAgent,
 						IPAddress:          clientIP,
 						RequestPayloadHash: service.HashUsageRequestPayload(firstMessage),
@@ -1476,12 +1509,6 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					}
 				})
 			},
-		}
-
-		// 应用渠道模型映射到 WebSocket 首条消息
-		wsFirstMessage := firstMessage
-		if channelMappingWS.Mapped {
-			wsFirstMessage = h.gatewayService.ReplaceModelInBody(firstMessage, channelMappingWS.MappedModel)
 		}
 
 		if err := h.gatewayService.ProxyResponsesWebSocketFromClient(ctx, c, wsConn, account, token, wsFirstMessage, hooks); err != nil {

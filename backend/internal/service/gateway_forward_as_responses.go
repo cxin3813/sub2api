@@ -180,9 +180,9 @@ func (s *GatewayService) ForwardAsResponses(
 	var result *ForwardResult
 	var handleErr error
 	if clientStream {
-		result, handleErr = s.handleResponsesStreamingResponse(resp, c, originalModel, mappedModel, reasoningEffort, startTime)
+		result, handleErr = s.handleResponsesStreamingResponse(resp, c, originalModel, mappedModel, reasoningEffort, startTime, anthropicBody)
 	} else {
-		result, handleErr = s.handleResponsesBufferedStreamingResponse(resp, c, originalModel, mappedModel, reasoningEffort, startTime)
+		result, handleErr = s.handleResponsesBufferedStreamingResponse(resp, c, originalModel, mappedModel, reasoningEffort, startTime, anthropicBody)
 	}
 
 	return result, handleErr
@@ -230,6 +230,7 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 	mappedModel string,
 	reasoningEffort *string,
 	startTime time.Time,
+	requestBody []byte,
 ) (*ForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 
@@ -351,6 +352,7 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 		UpstreamModel:   mappedModel,
 		ReasoningEffort: reasoningEffort,
 		Stream:          false,
+		RequestBody:     cloneBytes(requestBody),
 		Duration:        time.Since(startTime),
 	}, nil
 }
@@ -364,6 +366,7 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 	mappedModel string,
 	reasoningEffort *string,
 	startTime time.Time,
+	requestBody []byte,
 ) (*ForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 
@@ -397,6 +400,7 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 			UpstreamModel:   mappedModel,
 			ReasoningEffort: reasoningEffort,
 			Stream:          true,
+			RequestBody:     cloneBytes(requestBody),
 			Duration:        time.Since(startTime),
 			FirstTokenMs:    firstTokenMs,
 		}

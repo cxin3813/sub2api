@@ -503,6 +503,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			requestPayloadHash := service.HashUsageRequestPayload(body)
 			inboundEndpoint := GetInboundEndpoint(c)
 			upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
+			requestMethod := c.Request.Method
+			requestPath := c.Request.URL.Path
+			requestContentType := c.GetHeader("Content-Type")
+			requestHeaderJSON := service.MarshalGatewayBodyLogHeaders(c.Request.Header)
 
 			if result.ReasoningEffort == nil {
 				result.ReasoningEffort = service.NormalizeClaudeOutputEffort(parsedReq.OutputEffort)
@@ -521,6 +525,11 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					Subscription:       subscription,
 					InboundEndpoint:    inboundEndpoint,
 					UpstreamEndpoint:   upstreamEndpoint,
+					RequestMethod:      requestMethod,
+					RequestPath:        requestPath,
+					RequestContentType: requestContentType,
+					RequestHeaderJSON:  requestHeaderJSON,
+					RequestBody:        body,
 					UserAgent:          userAgent,
 					IPAddress:          clientIP,
 					RequestPayloadHash: requestPayloadHash,
@@ -898,6 +907,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			requestPayloadHash := service.HashUsageRequestPayload(body)
 			inboundEndpoint := GetInboundEndpoint(c)
 			upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
+			requestMethod := c.Request.Method
+			requestPath := c.Request.URL.Path
+			requestContentType := c.GetHeader("Content-Type")
+			requestHeaderJSON := service.MarshalGatewayBodyLogHeaders(c.Request.Header)
 
 			if result.ReasoningEffort == nil {
 				result.ReasoningEffort = service.NormalizeClaudeOutputEffort(parsedReq.OutputEffort)
@@ -916,6 +929,11 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					Subscription:       currentSubscription,
 					InboundEndpoint:    inboundEndpoint,
 					UpstreamEndpoint:   upstreamEndpoint,
+					RequestMethod:      requestMethod,
+					RequestPath:        requestPath,
+					RequestContentType: requestContentType,
+					RequestHeaderJSON:  requestHeaderJSON,
+					RequestBody:        body,
 					UserAgent:          userAgent,
 					IPAddress:          clientIP,
 					RequestPayloadHash: requestPayloadHash,

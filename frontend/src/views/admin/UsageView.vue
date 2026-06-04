@@ -109,6 +109,7 @@
         :default-sort-order="'desc'"
         @sort="handleSort"
         @userClick="handleUserClick"
+        @bodyLogClick="handleBodyLogClick"
       />
       <Pagination v-if="pagination.total > 0" :page="pagination.page" :total="pagination.total" :page-size="pagination.page_size" @update:page="handlePageChange" @update:pageSize="handlePageSizeChange" />
     </div>
@@ -128,6 +129,12 @@
     :hide-actions="true"
     @close="showBalanceHistoryModal = false; balanceHistoryUser = null"
   />
+  <UsageBodyLogModal
+    :show="showBodyLogModal"
+    :loading="bodyLogLoading"
+    :body-log="bodyLogDetail"
+    @close="showBodyLogModal = false"
+  />
 </template>
 
 <script setup lang="ts">
@@ -143,11 +150,12 @@ import AppLayout from '@/components/layout/AppLayout.vue'; import Pagination fro
 import UsageStatsCards from '@/components/admin/usage/UsageStatsCards.vue'; import UsageFilters from '@/components/admin/usage/UsageFilters.vue'
 import UsageTable from '@/components/admin/usage/UsageTable.vue'; import UsageExportProgress from '@/components/admin/usage/UsageExportProgress.vue'
 import UsageCleanupDialog from '@/components/admin/usage/UsageCleanupDialog.vue'
+import UsageBodyLogModal from '@/components/admin/usage/UsageBodyLogModal.vue'
 import UserBalanceHistoryModal from '@/components/admin/user/UserBalanceHistoryModal.vue'
 import ModelDistributionChart from '@/components/charts/ModelDistributionChart.vue'; import GroupDistributionChart from '@/components/charts/GroupDistributionChart.vue'; import TokenUsageTrend from '@/components/charts/TokenUsageTrend.vue'
 import EndpointDistributionChart from '@/components/charts/EndpointDistributionChart.vue'
 import Icon from '@/components/icons/Icon.vue'
-import type { AdminUsageLog, TrendDataPoint, ModelStat, GroupStat, EndpointStat, AdminUser } from '@/types'; import type { AdminUsageStatsResponse, AdminUsageQueryParams } from '@/api/admin/usage'
+import type { AdminUsageLog, TrendDataPoint, ModelStat, GroupStat, EndpointStat, AdminUser } from '@/types'; import type { AdminUsageStatsResponse, AdminUsageQueryParams, AdminUsageBodyLogDetail } from '@/api/admin/usage'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -180,6 +188,9 @@ const cleanupDialogVisible = ref(false)
 // Balance history modal state
 const showBalanceHistoryModal = ref(false)
 const balanceHistoryUser = ref<AdminUser | null>(null)
+const showBodyLogModal = ref(false)
+const bodyLogLoading = ref(false)
+const bodyLogDetail = ref<AdminUsageBodyLogDetail | null>(null)
 
 const breakdownFilters = computed(() => {
   const f: Record<string, any> = {}
@@ -199,6 +210,27 @@ const handleUserClick = async (userId: number) => {
     showBalanceHistoryModal.value = true
   } catch {
     appStore.showError(t('admin.usage.failedToLoadUser'))
+  }
+}
+
+const handleBodyLogClick = async (row: AdminUsageLog) => {
+  if (!row.id) return
+
+  showBodyLogModal.value = true
+  bodyLogLoading.value = true
+  bodyLogDetail.value = null
+
+  try {
+    bodyLogDetail.value = await adminAPI.usage.getBodyLog(row.id)
+  } catch (error: any) {
+    if (error?.status === 404) {
+      bodyLogDetail.value = null
+      return
+    }
+    showBodyLogModal.value = false
+    appStore.showError(t('admin.usage.failedToLoadBodyLog'))
+  } finally {
+    bodyLogLoading.value = false
   }
 }
 
@@ -517,7 +549,7 @@ const exportToExcel = async () => {
 }
 
 // Column visibility
-const ALWAYS_VISIBLE = ['user', 'created_at']
+const ALWAYS_VISIBLE = ['user', 'created_at', 'actions']
 const DEFAULT_HIDDEN_COLUMNS = ['reasoning_effort', 'user_agent']
 const HIDDEN_COLUMNS_KEY = 'usage-hidden-columns'
 
@@ -537,7 +569,8 @@ const allColumns = computed(() => [
   { key: 'duration', label: t('usage.duration'), sortable: false },
   { key: 'created_at', label: t('usage.time'), sortable: true },
   { key: 'user_agent', label: t('usage.userAgent'), sortable: false },
-  { key: 'ip_address', label: t('admin.usage.ipAddress'), sortable: false }
+  { key: 'ip_address', label: t('admin.usage.ipAddress'), sortable: false },
+  { key: 'actions', label: t('common.actions'), sortable: false }
 ])
 
 const hiddenColumns = reactive<Set<string>>(new Set())

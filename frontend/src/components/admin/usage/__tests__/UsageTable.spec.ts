@@ -6,6 +6,7 @@ import UsageTable from '../UsageTable.vue'
 
 const messages: Record<string, string> = {
   'usage.costDetails': 'Cost Breakdown',
+  'admin.usage.viewBodyLog': 'View Body Log',
   'admin.usage.inputCost': 'Input Cost',
   'admin.usage.outputCost': 'Output Cost',
   'admin.usage.cacheCreationCost': 'Cache Creation Cost',
@@ -63,6 +64,7 @@ const DataTableStub = {
         <slot name="cell-billing_mode" :row="row" />
         <slot name="cell-tokens" :row="row" />
         <slot name="cell-cost" :row="row" />
+        <slot name="cell-actions" :row="row" />
       </div>
     </div>
   `,
@@ -98,6 +100,16 @@ const baseImageRow = {
 
 describe('admin UsageTable tooltip', () => {
   beforeEach(() => {
+    vi.stubGlobal('matchMedia', vi.fn().mockImplementation(() => ({
+      matches: true,
+      media: '(min-width: 768px)',
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })))
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       x: 0,
       y: 0,
@@ -197,6 +209,53 @@ describe('admin UsageTable tooltip', () => {
     const text = wrapper.text()
     expect(text).toContain('claude-sonnet-4')
     expect(text).toContain('claude-sonnet-4-20250514')
+  })
+
+  it('emits bodyLogClick when the body log action is clicked', async () => {
+    const row = {
+      request_id: 'req-admin-body-log-1',
+      model: 'gpt-4.1',
+      actual_cost: 0,
+      total_cost: 0,
+      account_rate_multiplier: 1,
+      rate_multiplier: 1,
+      input_cost: 0,
+      output_cost: 0,
+      cache_creation_cost: 0,
+      cache_read_cost: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_creation_tokens: 0,
+      cache_read_tokens: 0,
+      cache_creation_5m_tokens: 0,
+      cache_creation_1h_tokens: 0,
+      cache_ttl_overridden: false,
+      stream: false,
+      created_at: '2026-06-03T00:00:00Z',
+    }
+
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [row],
+        loading: false,
+        columns: [
+          { key: 'model', label: 'Model' },
+          { key: 'actions', label: 'Actions' },
+        ],
+      },
+      global: {
+        stubs: {
+          DataTable: DataTableStub,
+          EmptyState: true,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+
+    await wrapper.get('[data-testid="usage-body-log-button"]').trigger('click')
+
+    expect(wrapper.emitted('bodyLogClick')).toEqual([[row]])
   })
 
   it.each([

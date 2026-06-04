@@ -230,19 +230,23 @@ type OpenAIForwardResult struct {
 	ServiceTier *string
 	// ReasoningEffort is extracted from request body (reasoning.effort) or derived from model suffix.
 	// Stored for usage records display; nil means not provided / not applicable.
-	ReasoningEffort    *string
-	Stream             bool
-	OpenAIWSMode       bool
-	ResponseHeaders    http.Header
-	Duration           time.Duration
-	FirstTokenMs       *int
-	ImageCount         int
-	ImageSize          string
-	ImageInputSize     string
-	ImageOutputSize    string
-	ImageOutputSizes   []string
-	ImageSizeSource    string
-	ImageSizeBreakdown map[string]int
+	ReasoningEffort     *string
+	Stream              bool
+	OpenAIWSMode        bool
+	ResponseHeaders     http.Header
+	RequestBody         []byte
+	ResponseBody        []byte
+	StatusCode          int
+	ResponseContentType string
+	Duration            time.Duration
+	FirstTokenMs        *int
+	ImageCount          int
+	ImageSize           string
+	ImageInputSize      string
+	ImageOutputSize     string
+	ImageOutputSizes    []string
+	ImageSizeSource     string
+	ImageSizeBreakdown  map[string]int
 }
 
 type OpenAIWSRetryMetricsSnapshot struct {
@@ -344,6 +348,7 @@ type OpenAIGatewayService struct {
 	balanceNotifyService  *BalanceNotifyService
 	settingService        *SettingService
 	userPlatformQuotaRepo UserPlatformQuotaRepository
+	gatewayBodyLogService *GatewayBodyLogService
 
 	openaiWSPoolOnce              sync.Once
 	openaiWSStateStoreOnce        sync.Once
@@ -432,6 +437,13 @@ func NewOpenAIGatewayService(
 	}
 	svc.logOpenAIWSModeBootstrap()
 	return svc
+}
+
+func (s *OpenAIGatewayService) SetGatewayBodyLogService(bodyLogService *GatewayBodyLogService) {
+	if s == nil {
+		return
+	}
+	s.gatewayBodyLogService = bodyLogService
 }
 
 // ResolveChannelMapping 解析渠道级模型映射（代理到 ChannelService）
@@ -3130,6 +3142,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			ReasoningEffort: reasoningEffort,
 			Stream:          reqStream,
 			OpenAIWSMode:    false,
+			ResponseHeaders: resp.Header.Clone(),
 			Duration:        time.Since(startTime),
 			FirstTokenMs:    firstTokenMs,
 		}
@@ -3393,6 +3406,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		ReasoningEffort: reasoningEffort,
 		Stream:          reqStream,
 		OpenAIWSMode:    false,
+		ResponseHeaders: resp.Header.Clone(),
 		Duration:        time.Since(startTime),
 		FirstTokenMs:    firstTokenMs,
 	}
@@ -5698,6 +5712,11 @@ type OpenAIRecordUsageInput struct {
 	Subscription       *UserSubscription
 	InboundEndpoint    string
 	UpstreamEndpoint   string
+	RequestMethod      string
+	RequestPath        string
+	RequestContentType string
+	RequestHeaderJSON  []byte
+	RequestBody        []byte
 	UserAgent          string // 请求的 User-Agent
 	IPAddress          string // 请求的客户端 IP 地址
 	RequestPayloadHash string
@@ -5897,8 +5916,37 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		)
 	}
 
+	captureBodyLog := func() {
+		captureGatewayBodyLogBestEffort(ctx, s.gatewayBodyLogService, GatewayBodyLogCaptureInput{
+			UsageLog:            usageLog,
+			RequestBody:         gatewayBodyLogRequestBody(input.RequestBody, result.RequestBody),
+			ResponseBody:        result.ResponseBody,
+			RequestContentType:  input.RequestContentType,
+			ResponseContentType: firstNonEmpty(result.ResponseContentType, result.ResponseHeaders.Get("Content-Type")),
+			StatusCode:          result.StatusCode,
+			RequestMethod:       input.RequestMethod,
+			RequestPath:         input.RequestPath,
+			InboundEndpoint:     optionalTrimmedStringPtr(input.InboundEndpoint),
+			UpstreamEndpoint:    optionalTrimmedStringPtr(input.UpstreamEndpoint),
+			Platform:            firstNonEmpty(account.Platform, PlatformOpenAI),
+			Model:               usageLog.Model,
+			RequestType:         usageLog.EffectiveRequestType(),
+			Stream:              usageLog.Stream,
+			ClientRequestID:     resolveClientRequestID(ctx),
+			RequestHeaderJSON:   input.RequestHeaderJSON,
+			ResponseHeaderJSON:  MarshalGatewayBodyLogHeaders(result.ResponseHeaders),
+		}, "service.openai_gateway")
+	}
+	bodyLogEnabled := shouldCaptureGatewayBodyLog(ctx, s.gatewayBodyLogService, "service.openai_gateway")
+
 	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
-		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
+		if bodyLogEnabled {
+			if writeUsageLogWithReturnedID(ctx, s.usageLogRepo, usageLog, "service.openai_gateway") {
+				captureBodyLog()
+			}
+		} else {
+			writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
+		}
 		logger.LegacyPrintf("service.openai_gateway", "[SIMPLE MODE] Usage recorded (not billed): user=%d, tokens=%d", usageLog.UserID, usageLog.TotalTokens())
 		s.deferredService.ScheduleLastUsedUpdate(account.ID)
 		return nil
@@ -5923,7 +5971,13 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if billingErr != nil {
 		return billingErr
 	}
-	writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
+	if bodyLogEnabled {
+		if writeUsageLogWithReturnedID(ctx, s.usageLogRepo, usageLog, "service.openai_gateway") {
+			captureBodyLog()
+		}
+	} else {
+		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
+	}
 
 	return nil
 }

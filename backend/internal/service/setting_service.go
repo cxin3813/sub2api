@@ -1898,6 +1898,10 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyAntigravityUserAgentVersion] = antigravity.NormalizeUserAgentVersion(settings.AntigravityUserAgentVersion)
 	updates[SettingKeyOpenAICodexUserAgent] = strings.TrimSpace(settings.OpenAICodexUserAgent)
 	updates[SettingKeyOpenAIAllowClaudeCodeCodexPlugin] = strconv.FormatBool(settings.OpenAIAllowClaudeCodeCodexPlugin)
+	updates[SettingKeyGatewayBodyLogEnabled] = strconv.FormatBool(settings.GatewayBodyLogEnabled)
+	updates[SettingKeyGatewayBodyLogMaxBytes] = strconv.Itoa(clampGatewayBodyLogMaxBytes(settings.GatewayBodyLogMaxBytes))
+	updates[SettingKeyGatewayBodyLogCaptureRequest] = strconv.FormatBool(settings.GatewayBodyLogCaptureRequest)
+	updates[SettingKeyGatewayBodyLogCaptureResponse] = strconv.FormatBool(settings.GatewayBodyLogCaptureResponse)
 	updates[SettingPaymentVisibleMethodAlipaySource] = settings.PaymentVisibleMethodAlipaySource
 	updates[SettingPaymentVisibleMethodWxpaySource] = settings.PaymentVisibleMethodWxpaySource
 	updates[SettingPaymentVisibleMethodAlipayEnabled] = strconv.FormatBool(settings.PaymentVisibleMethodAlipayEnabled)
@@ -2323,6 +2327,41 @@ func (s *SettingService) IsAnthropicCacheTTL1hInjectionEnabled(ctx context.Conte
 // IsRewriteMessageCacheControlEnabled 检查是否启用 messages cache_control 改写。
 func (s *SettingService) IsRewriteMessageCacheControlEnabled(ctx context.Context) bool {
 	return s.getGatewayForwardingSettingsCached(ctx).rewriteMessageCacheControl
+}
+
+func (s *SettingService) GetGatewayBodyLogSettings(ctx context.Context) (GatewayBodyLogSettings, error) {
+	result := defaultGatewayBodyLogSettings()
+	if s == nil || s.settingRepo == nil {
+		return result, nil
+	}
+
+	if value, err := s.settingRepo.GetValue(ctx, SettingKeyGatewayBodyLogEnabled); err == nil {
+		result.Enabled = value == "true"
+	} else if !errors.Is(err, ErrSettingNotFound) {
+		return result, fmt.Errorf("get gateway body log enabled setting: %w", err)
+	}
+
+	if value, err := s.settingRepo.GetValue(ctx, SettingKeyGatewayBodyLogMaxBytes); err == nil {
+		if parsed, parseErr := strconv.Atoi(strings.TrimSpace(value)); parseErr == nil {
+			result.MaxBytes = clampGatewayBodyLogMaxBytes(parsed)
+		}
+	} else if !errors.Is(err, ErrSettingNotFound) {
+		return result, fmt.Errorf("get gateway body log max bytes setting: %w", err)
+	}
+
+	if value, err := s.settingRepo.GetValue(ctx, SettingKeyGatewayBodyLogCaptureRequest); err == nil {
+		result.CaptureRequest = !isFalseSettingValue(value)
+	} else if !errors.Is(err, ErrSettingNotFound) {
+		return result, fmt.Errorf("get gateway body log capture request setting: %w", err)
+	}
+
+	if value, err := s.settingRepo.GetValue(ctx, SettingKeyGatewayBodyLogCaptureResponse); err == nil {
+		result.CaptureResponse = !isFalseSettingValue(value)
+	} else if !errors.Is(err, ErrSettingNotFound) {
+		return result, fmt.Errorf("get gateway body log capture response setting: %w", err)
+	}
+
+	return result, nil
 }
 
 // IsEmailVerifyEnabled 检查是否开启邮件验证
@@ -2811,6 +2850,10 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyRewriteMessageCacheControl:         strconv.FormatBool(s.defaultRewriteMessageCacheControl()),
 		SettingKeyAntigravityUserAgentVersion:        "",
 		SettingKeyOpenAICodexUserAgent:               "",
+		SettingKeyGatewayBodyLogEnabled:              "false",
+		SettingKeyGatewayBodyLogMaxBytes:             strconv.Itoa(GatewayBodyLogDefaultMaxBytes),
+		SettingKeyGatewayBodyLogCaptureRequest:       "true",
+		SettingKeyGatewayBodyLogCaptureResponse:      "true",
 		SettingPaymentVisibleMethodAlipaySource:      "",
 		SettingPaymentVisibleMethodWxpaySource:       "",
 		SettingPaymentVisibleMethodAlipayEnabled:     "false",
@@ -3332,6 +3375,25 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.AntigravityUserAgentVersion = antigravity.NormalizeUserAgentVersion(settings[SettingKeyAntigravityUserAgentVersion])
 	result.OpenAICodexUserAgent = strings.TrimSpace(settings[SettingKeyOpenAICodexUserAgent])
 	result.OpenAIAllowClaudeCodeCodexPlugin = settings[SettingKeyOpenAIAllowClaudeCodeCodexPlugin] == "true"
+	result.GatewayBodyLogEnabled = settings[SettingKeyGatewayBodyLogEnabled] == "true"
+	if raw := strings.TrimSpace(settings[SettingKeyGatewayBodyLogMaxBytes]); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil {
+			result.GatewayBodyLogMaxBytes = clampGatewayBodyLogMaxBytes(v)
+		}
+	}
+	if result.GatewayBodyLogMaxBytes <= 0 {
+		result.GatewayBodyLogMaxBytes = GatewayBodyLogDefaultMaxBytes
+	}
+	if raw, ok := settings[SettingKeyGatewayBodyLogCaptureRequest]; ok {
+		result.GatewayBodyLogCaptureRequest = !isFalseSettingValue(raw)
+	} else {
+		result.GatewayBodyLogCaptureRequest = true
+	}
+	if raw, ok := settings[SettingKeyGatewayBodyLogCaptureResponse]; ok {
+		result.GatewayBodyLogCaptureResponse = !isFalseSettingValue(raw)
+	} else {
+		result.GatewayBodyLogCaptureResponse = true
+	}
 
 	// Web search emulation: quick enabled check from the JSON config
 	if raw := settings[SettingKeyWebSearchEmulationConfig]; raw != "" {

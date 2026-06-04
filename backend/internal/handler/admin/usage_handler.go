@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -25,6 +26,7 @@ type UsageHandler struct {
 	apiKeyService  *service.APIKeyService
 	adminService   service.AdminService
 	cleanupService *service.UsageCleanupService
+	bodyLogService *service.GatewayBodyLogService
 }
 
 // NewUsageHandler creates a new admin usage handler
@@ -33,13 +35,18 @@ func NewUsageHandler(
 	apiKeyService *service.APIKeyService,
 	adminService service.AdminService,
 	cleanupService *service.UsageCleanupService,
+	bodyLogService ...*service.GatewayBodyLogService,
 ) *UsageHandler {
-	return &UsageHandler{
+	h := &UsageHandler{
 		usageService:   usageService,
 		apiKeyService:  apiKeyService,
 		adminService:   adminService,
 		cleanupService: cleanupService,
 	}
+	if len(bodyLogService) > 0 {
+		h.bodyLogService = bodyLogService[0]
+	}
+	return h
 }
 
 // CreateUsageCleanupTaskRequest represents cleanup task creation request
@@ -197,6 +204,96 @@ func (h *UsageHandler) List(c *gin.Context) {
 		out = append(out, *dto.UsageLogFromServiceAdmin(&records[i]))
 	}
 	response.Paginated(c, out, result.Total, page, pageSize)
+}
+
+type adminGatewayBodyLogDetail struct {
+	RequestID           string          `json:"request_id"`
+	APIKeyID            int64           `json:"api_key_id"`
+	UserID              int64           `json:"user_id"`
+	AccountID           int64           `json:"account_id"`
+	Platform            string          `json:"platform"`
+	Model               string          `json:"model"`
+	RequestType         string          `json:"request_type"`
+	Stream              bool            `json:"stream"`
+	RequestMethod       string          `json:"request_method"`
+	RequestPath         string          `json:"request_path"`
+	InboundEndpoint     *string         `json:"inbound_endpoint,omitempty"`
+	UpstreamEndpoint    *string         `json:"upstream_endpoint,omitempty"`
+	ClientRequestID     string          `json:"client_request_id,omitempty"`
+	RequestContentType  string          `json:"request_content_type"`
+	ResponseContentType string          `json:"response_content_type"`
+	StatusCode          int             `json:"status_code"`
+	RequestHeaderJSON   json.RawMessage `json:"request_headers,omitempty"`
+	ResponseHeaderJSON  json.RawMessage `json:"response_headers,omitempty"`
+	RequestBody         string          `json:"request_body"`
+	ResponseBody        string          `json:"response_body"`
+	RequestBodyBytes    int64           `json:"request_body_bytes"`
+	ResponseBodyBytes   int64           `json:"response_body_bytes"`
+	RequestBodySHA256   string          `json:"request_body_sha256,omitempty"`
+	ResponseBodySHA256  string          `json:"response_body_sha256,omitempty"`
+	RequestTruncated    bool            `json:"request_truncated"`
+	ResponseTruncated   bool            `json:"response_truncated"`
+	StorageKind         string          `json:"storage_kind"`
+}
+
+func adminGatewayBodyLogDetailFromService(log *service.GatewayBodyLog) adminGatewayBodyLogDetail {
+	if log == nil {
+		return adminGatewayBodyLogDetail{}
+	}
+	return adminGatewayBodyLogDetail{
+		RequestID:           log.RequestID,
+		APIKeyID:            log.APIKeyID,
+		UserID:              log.UserID,
+		AccountID:           log.AccountID,
+		Platform:            log.Platform,
+		Model:               log.Model,
+		RequestType:         log.RequestType.String(),
+		Stream:              log.Stream,
+		RequestMethod:       log.RequestMethod,
+		RequestPath:         log.RequestPath,
+		InboundEndpoint:     log.InboundEndpoint,
+		UpstreamEndpoint:    log.UpstreamEndpoint,
+		ClientRequestID:     log.ClientRequestID,
+		RequestContentType:  log.RequestContentType,
+		ResponseContentType: log.ResponseContentType,
+		StatusCode:          log.StatusCode,
+		RequestHeaderJSON:   json.RawMessage(log.RequestHeaderJSON),
+		ResponseHeaderJSON:  json.RawMessage(log.ResponseHeaderJSON),
+		RequestBody:         string(log.RequestBody),
+		ResponseBody:        string(log.ResponseBody),
+		RequestBodyBytes:    log.RequestBodyBytes,
+		ResponseBodyBytes:   log.ResponseBodyBytes,
+		RequestBodySHA256:   log.RequestBodySHA256,
+		ResponseBodySHA256:  log.ResponseBodySHA256,
+		RequestTruncated:    log.RequestTruncated,
+		ResponseTruncated:   log.ResponseTruncated,
+		StorageKind:         log.StorageKind,
+	}
+}
+
+// GetBodyLog returns the captured request/response body for a usage log.
+// GET /api/v1/admin/usage/:id/body-log
+func (h *UsageHandler) GetBodyLog(c *gin.Context) {
+	if h.usageService == nil || h.bodyLogService == nil {
+		response.ErrorFrom(c, service.ErrGatewayBodyLogNotFound)
+		return
+	}
+	id, err := strconv.ParseInt(strings.TrimSpace(c.Param("id")), 10, 64)
+	if err != nil || id <= 0 {
+		response.BadRequest(c, "Invalid usage id")
+		return
+	}
+	usageLog, err := h.usageService.GetByID(c.Request.Context(), id)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	bodyLog, err := h.bodyLogService.GetByUsageLog(c.Request.Context(), usageLog)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, adminGatewayBodyLogDetailFromService(bodyLog))
 }
 
 // Stats handles getting usage statistics with filters

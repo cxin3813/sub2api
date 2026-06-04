@@ -220,9 +220,9 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 
 	// 8. Forward response
 	if clientStream {
-		return s.streamRawChatCompletions(c, resp, account, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime, len(body))
+		return s.streamRawChatCompletions(c, resp, account, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime, upstreamBody, len(body))
 	}
-	return s.bufferRawChatCompletions(c, resp, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
+	return s.bufferRawChatCompletions(c, resp, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime, upstreamBody)
 }
 
 // streamRawChatCompletions 透传上游 CC SSE 流到客户端，并提取 usage（包括
@@ -241,6 +241,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	reasoningEffort *string,
 	serviceTier *string,
 	startTime time.Time,
+	requestBody []byte,
 	requestBodyLen int,
 ) (*OpenAIForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
@@ -375,6 +376,8 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		ReasoningEffort: reasoningEffort,
 		ServiceTier:     serviceTier,
 		Stream:          true,
+		ResponseHeaders: resp.Header.Clone(),
+		RequestBody:     cloneBytes(requestBody),
 		Duration:        time.Since(startTime),
 		FirstTokenMs:    firstTokenMs,
 	}, nil
@@ -429,6 +432,7 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 	reasoningEffort *string,
 	serviceTier *string,
 	startTime time.Time,
+	requestBody []byte,
 ) (*OpenAIForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 
@@ -472,6 +476,8 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 		ReasoningEffort: reasoningEffort,
 		ServiceTier:     serviceTier,
 		Stream:          false,
+		RequestBody:     cloneBytes(requestBody),
+		ResponseHeaders: resp.Header.Clone(),
 		Duration:        time.Since(startTime),
 	}, nil
 }

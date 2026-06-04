@@ -186,9 +186,9 @@ func (s *GatewayService) ForwardAsChatCompletions(
 	var result *ForwardResult
 	var handleErr error
 	if clientStream {
-		result, handleErr = s.handleCCStreamingFromAnthropic(resp, c, originalModel, mappedModel, reasoningEffort, startTime, includeUsage)
+		result, handleErr = s.handleCCStreamingFromAnthropic(resp, c, originalModel, mappedModel, reasoningEffort, startTime, anthropicBody, includeUsage)
 	} else {
-		result, handleErr = s.handleCCBufferedFromAnthropic(resp, c, originalModel, mappedModel, reasoningEffort, startTime)
+		result, handleErr = s.handleCCBufferedFromAnthropic(resp, c, originalModel, mappedModel, reasoningEffort, startTime, anthropicBody)
 	}
 
 	return result, handleErr
@@ -221,6 +221,7 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 	mappedModel string,
 	reasoningEffort *string,
 	startTime time.Time,
+	requestBody []byte,
 ) (*ForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 
@@ -334,6 +335,7 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 		UpstreamModel:   mappedModel,
 		ReasoningEffort: reasoningEffort,
 		Stream:          false,
+		RequestBody:     cloneBytes(requestBody),
 		Duration:        time.Since(startTime),
 	}, nil
 }
@@ -347,6 +349,7 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 	mappedModel string,
 	reasoningEffort *string,
 	startTime time.Time,
+	requestBody []byte,
 	includeUsage bool,
 ) (*ForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
@@ -386,6 +389,7 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 			UpstreamModel:   mappedModel,
 			ReasoningEffort: reasoningEffort,
 			Stream:          true,
+			RequestBody:     cloneBytes(requestBody),
 			Duration:        time.Since(startTime),
 			FirstTokenMs:    firstTokenMs,
 		}

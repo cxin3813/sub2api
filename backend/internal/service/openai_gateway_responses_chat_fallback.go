@@ -259,6 +259,7 @@ func (s *OpenAIGatewayService) bufferChatCompletionsAsResponses(
 		ReasoningEffort: reasoningEffort,
 		ServiceTier:     serviceTier,
 		Stream:          false,
+		ResponseHeaders: resp.Header.Clone(),
 		Duration:        time.Since(startTime),
 	}, nil
 }
@@ -379,6 +380,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 			ReasoningEffort: reasoningEffort,
 			ServiceTier:     serviceTier,
 			Stream:          true,
+			ResponseHeaders: resp.Header.Clone(),
 			Duration:        time.Since(startTime),
 			FirstTokenMs:    firstTokenMs,
 		}, fmt.Errorf("stream usage incomplete: %w", err)
@@ -409,6 +411,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 		ReasoningEffort: reasoningEffort,
 		ServiceTier:     serviceTier,
 		Stream:          true,
+		ResponseHeaders: resp.Header.Clone(),
 		Duration:        time.Since(startTime),
 		FirstTokenMs:    firstTokenMs,
 	}, nil

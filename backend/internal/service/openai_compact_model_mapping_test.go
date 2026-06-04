@@ -25,8 +25,12 @@ func TestOpenAIGatewayService_Forward_CompactOnlyModelMappingOverridesOAuthUpstr
 
 	upstream := &httpUpstreamRecorder{resp: &http.Response{
 		StatusCode: http.StatusOK,
-		Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid-compact-map"}},
-		Body:       io.NopCloser(strings.NewReader(`{"id":"resp_123","status":"completed","model":"gpt-5.4-openai-compact","output":[],"usage":{"input_tokens":1,"output_tokens":1}}`)),
+		Header: http.Header{
+			"Content-Type":                 []string{"application/json"},
+			"x-request-id":                 []string{"rid-compact-map"},
+			"X-Codex-Primary-Used-Percent": []string{"56"},
+		},
+		Body: io.NopCloser(strings.NewReader(`{"id":"resp_123","status":"completed","model":"gpt-5.4-openai-compact","output":[],"usage":{"input_tokens":1,"output_tokens":1}}`)),
 	}}
 
 	svc := &OpenAIGatewayService{httpUpstream: upstream}
@@ -50,6 +54,7 @@ func TestOpenAIGatewayService_Forward_CompactOnlyModelMappingOverridesOAuthUpstr
 	require.NotNil(t, result)
 	require.Equal(t, "gpt-5.4", result.Model)
 	require.Equal(t, "gpt-5.4-openai-compact", result.UpstreamModel)
+	require.Equal(t, "56", result.ResponseHeaders.Get("x-codex-primary-used-percent"))
 	require.Equal(t, "gpt-5.4-openai-compact", gjson.GetBytes(upstream.lastBody, "model").String())
 }
 

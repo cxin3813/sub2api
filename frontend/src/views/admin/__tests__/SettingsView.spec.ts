@@ -382,6 +382,10 @@ const baseSettingsResponse = {
   rewrite_message_cache_control: false,
   antigravity_user_agent_version: "",
   openai_codex_user_agent: "",
+  gateway_body_log_enabled: false,
+  gateway_body_log_max_bytes: 262144,
+  gateway_body_log_capture_request: true,
+  gateway_body_log_capture_response: true,
   payment_enabled: true,
   payment_min_amount: 1,
   payment_max_amount: 10000,
@@ -460,6 +464,16 @@ async function openSecurityTab(wrapper: ReturnType<typeof mountView>) {
 
   expect(securityTabButton).toBeDefined();
   await securityTabButton?.trigger("click");
+  await flushPromises();
+}
+
+async function openGatewayTab(wrapper: ReturnType<typeof mountView>) {
+  const gatewayTabButton = wrapper
+    .findAll("button")
+    .find((node) => node.text().includes("admin.settings.tabs.gateway"));
+
+  expect(gatewayTabButton).toBeDefined();
+  await gatewayTabButton?.trigger("click");
   await flushPromises();
 }
 
@@ -660,6 +674,73 @@ describe("admin SettingsView payment visible method controls", () => {
         antigravity_user_agent_version: "1.23.2",
       }),
     );
+  });
+
+  it("submits gateway body log settings", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      gateway_body_log_enabled: true,
+      gateway_body_log_max_bytes: 4096,
+      gateway_body_log_capture_request: false,
+      gateway_body_log_capture_response: true,
+    });
+
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openGatewayTab(wrapper);
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledTimes(1);
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        gateway_body_log_enabled: true,
+        gateway_body_log_max_bytes: 4096,
+        gateway_body_log_capture_request: false,
+        gateway_body_log_capture_response: true,
+      }),
+    );
+  });
+
+  it("loads gateway body log settings into the gateway form", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      gateway_body_log_enabled: true,
+      gateway_body_log_max_bytes: 8192,
+      gateway_body_log_capture_request: true,
+      gateway_body_log_capture_response: false,
+    });
+
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openGatewayTab(wrapper);
+
+    expect(
+      (
+        wrapper.get('[data-testid="gateway-body-log-enabled"]')
+          .element as HTMLInputElement
+      ).checked,
+    ).toBe(true);
+    expect(
+      (
+        wrapper.get('[data-testid="gateway-body-log-max-bytes"]')
+          .element as HTMLInputElement
+      ).value,
+    ).toBe("8192");
+    expect(
+      (
+        wrapper.get('[data-testid="gateway-body-log-capture-request"]')
+          .element as HTMLInputElement
+      ).checked,
+    ).toBe(true);
+    expect(
+      (
+        wrapper.get('[data-testid="gateway-body-log-capture-response"]')
+          .element as HTMLInputElement
+      ).checked,
+    ).toBe(false);
   });
 
   it("updates provider enablement immediately and reloads providers", async () => {

@@ -257,6 +257,10 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		AntigravityUserAgentVersion:            settings.AntigravityUserAgentVersion,
 		OpenAICodexUserAgent:                   settings.OpenAICodexUserAgent,
 		OpenAIAllowClaudeCodeCodexPlugin:       settings.OpenAIAllowClaudeCodeCodexPlugin,
+		GatewayBodyLogEnabled:                  settings.GatewayBodyLogEnabled,
+		GatewayBodyLogMaxBytes:                 settings.GatewayBodyLogMaxBytes,
+		GatewayBodyLogCaptureRequest:           settings.GatewayBodyLogCaptureRequest,
+		GatewayBodyLogCaptureResponse:          settings.GatewayBodyLogCaptureResponse,
 		WebSearchEmulationEnabled:              settings.WebSearchEmulationEnabled,
 		PaymentVisibleMethodAlipaySource:       settings.PaymentVisibleMethodAlipaySource,
 		PaymentVisibleMethodWxpaySource:        settings.PaymentVisibleMethodWxpaySource,
@@ -586,6 +590,10 @@ type UpdateSettingsRequest struct {
 	AntigravityUserAgentVersion        *string `json:"antigravity_user_agent_version"`
 	OpenAICodexUserAgent               *string `json:"openai_codex_user_agent"`
 	OpenAIAllowClaudeCodeCodexPlugin   *bool   `json:"openai_allow_claude_code_codex_plugin"`
+	GatewayBodyLogEnabled              *bool   `json:"gateway_body_log_enabled"`
+	GatewayBodyLogMaxBytes             *int    `json:"gateway_body_log_max_bytes"`
+	GatewayBodyLogCaptureRequest       *bool   `json:"gateway_body_log_capture_request"`
+	GatewayBodyLogCaptureResponse      *bool   `json:"gateway_body_log_capture_response"`
 
 	// Payment visible method routing
 	PaymentVisibleMethodAlipaySource  *string `json:"payment_visible_method_alipay_source"`
@@ -1663,6 +1671,30 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.OpenAIAllowClaudeCodeCodexPlugin
 		}(),
+		GatewayBodyLogEnabled: func() bool {
+			if req.GatewayBodyLogEnabled != nil {
+				return *req.GatewayBodyLogEnabled
+			}
+			return previousSettings.GatewayBodyLogEnabled
+		}(),
+		GatewayBodyLogMaxBytes: func() int {
+			if req.GatewayBodyLogMaxBytes != nil {
+				return *req.GatewayBodyLogMaxBytes
+			}
+			return previousSettings.GatewayBodyLogMaxBytes
+		}(),
+		GatewayBodyLogCaptureRequest: func() bool {
+			if req.GatewayBodyLogCaptureRequest != nil {
+				return *req.GatewayBodyLogCaptureRequest
+			}
+			return previousSettings.GatewayBodyLogCaptureRequest
+		}(),
+		GatewayBodyLogCaptureResponse: func() bool {
+			if req.GatewayBodyLogCaptureResponse != nil {
+				return *req.GatewayBodyLogCaptureResponse
+			}
+			return previousSettings.GatewayBodyLogCaptureResponse
+		}(),
 		PaymentVisibleMethodAlipaySource: func() string {
 			if req.PaymentVisibleMethodAlipaySource != nil {
 				return strings.TrimSpace(*req.PaymentVisibleMethodAlipaySource)
@@ -2040,6 +2072,10 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		AntigravityUserAgentVersion:            updatedSettings.AntigravityUserAgentVersion,
 		OpenAICodexUserAgent:                   updatedSettings.OpenAICodexUserAgent,
 		OpenAIAllowClaudeCodeCodexPlugin:       updatedSettings.OpenAIAllowClaudeCodeCodexPlugin,
+		GatewayBodyLogEnabled:                  updatedSettings.GatewayBodyLogEnabled,
+		GatewayBodyLogMaxBytes:                 updatedSettings.GatewayBodyLogMaxBytes,
+		GatewayBodyLogCaptureRequest:           updatedSettings.GatewayBodyLogCaptureRequest,
+		GatewayBodyLogCaptureResponse:          updatedSettings.GatewayBodyLogCaptureResponse,
 		PaymentVisibleMethodAlipaySource:       updatedSettings.PaymentVisibleMethodAlipaySource,
 		PaymentVisibleMethodWxpaySource:        updatedSettings.PaymentVisibleMethodWxpaySource,
 		PaymentVisibleMethodAlipayEnabled:      updatedSettings.PaymentVisibleMethodAlipayEnabled,
@@ -2511,6 +2547,18 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	}
 	if before.OpenAIAllowClaudeCodeCodexPlugin != after.OpenAIAllowClaudeCodeCodexPlugin {
 		changed = append(changed, "openai_allow_claude_code_codex_plugin")
+	}
+	if before.GatewayBodyLogEnabled != after.GatewayBodyLogEnabled {
+		changed = append(changed, "gateway_body_log_enabled")
+	}
+	if before.GatewayBodyLogMaxBytes != after.GatewayBodyLogMaxBytes {
+		changed = append(changed, "gateway_body_log_max_bytes")
+	}
+	if before.GatewayBodyLogCaptureRequest != after.GatewayBodyLogCaptureRequest {
+		changed = append(changed, "gateway_body_log_capture_request")
+	}
+	if before.GatewayBodyLogCaptureResponse != after.GatewayBodyLogCaptureResponse {
+		changed = append(changed, "gateway_body_log_capture_response")
 	}
 	if before.PaymentVisibleMethodAlipaySource != after.PaymentVisibleMethodAlipaySource {
 		changed = append(changed, "payment_visible_method_alipay_source")

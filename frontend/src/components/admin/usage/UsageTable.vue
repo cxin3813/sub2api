@@ -183,6 +183,21 @@
           <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
         </template>
 
+        <template #cell-actions="{ row }">
+          <div class="flex items-center gap-1">
+            <button
+              type="button"
+              class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
+              :title="t('admin.usage.viewBodyLog')"
+              data-testid="usage-body-log-button"
+              @click="$emit('bodyLogClick', row)"
+            >
+              <Icon name="eye" size="sm" />
+              <span class="text-xs">{{ t('admin.usage.viewBodyLog') }}</span>
+            </button>
+          </div>
+        </template>
+
         <template #empty><EmptyState :message="t('usage.noRecords')" /></template>
       </DataTable>
     </div>
@@ -441,6 +456,7 @@ withDefaults(defineProps<Props>(), {
 })
 defineEmits<{
   userClick: [userID: number, email?: string]
+  bodyLogClick: [row: AdminUsageLog]
   sort: [key: string, order: 'asc' | 'desc']
 }>()
 const { t } = useI18n()
