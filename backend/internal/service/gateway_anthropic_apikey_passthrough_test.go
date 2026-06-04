@@ -943,6 +943,9 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardDirect_NonStreamingSuc
 	require.Equal(t, 7, result.Usage.OutputTokens)
 	require.Equal(t, 5, result.Usage.CacheCreationInputTokens)
 	require.Equal(t, 4, result.Usage.CacheReadInputTokens)
+	require.Equal(t, http.StatusOK, result.StatusCode)
+	require.Equal(t, "application/json", result.ResponseContentType)
+	require.JSONEq(t, upstreamJSON, string(result.ResponseBody))
 	require.Equal(t, upstreamJSON, rec.Body.String())
 }
 

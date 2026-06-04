@@ -1,16 +1,21 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 type openAIRecordUsageLogRepoStub struct {
@@ -522,6 +527,48 @@ func TestOpenAIGatewayServiceRecordUsage_BodyLogEnabledUsesUsageCreateForReturne
 	require.Equal(t, 1, bodyLogRepo.calls)
 	require.NotNil(t, bodyLogRepo.lastLog)
 	require.Equal(t, int64(9104), bodyLogRepo.lastLog.UsageLogID)
+}
+
+func TestOpenAIGatewayServiceForwardReturnsFinalRequestAndResponsePayloads(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	requestBody := []byte(`{"model":"gpt-5.1","input":"hello","max_output_tokens":64,"previous_response_id":"resp_previous","stream":false}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(requestBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	responseBody := `{"id":"resp_forward_payload","model":"gpt-5.1","output":[],"usage":{"input_tokens":4,"output_tokens":6}}`
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusCreated,
+		Header: http.Header{
+			"Content-Type": []string{"application/json; charset=utf-8"},
+			"X-Request-Id": []string{"upstream-openai-payload"},
+		},
+		Body: io.NopCloser(strings.NewReader(responseBody)),
+	}}
+	svc := &OpenAIGatewayService{
+		cfg:          &config.Config{},
+		httpUpstream: upstream,
+	}
+
+	result, err := svc.Forward(context.Background(), c, &Account{
+		ID:          3006,
+		Type:        AccountTypeAPIKey,
+		Platform:    PlatformOpenAI,
+		Credentials: map[string]any{"api_key": "sk-upstream-test"},
+	}, requestBody)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, http.StatusCreated, result.StatusCode)
+	require.Equal(t, "application/json; charset=utf-8", result.ResponseContentType)
+	require.JSONEq(t, responseBody, string(result.ResponseBody))
+	require.JSONEq(t, responseBody, rec.Body.String())
+	require.NotContains(t, string(result.RequestBody), "max_output_tokens")
+	require.NotContains(t, string(result.RequestBody), "previous_response_id")
+	require.Equal(t, "gpt-5.1", gjson.GetBytes(result.RequestBody, "model").String())
+	require.Equal(t, "hello", gjson.GetBytes(result.RequestBody, "input").String())
+	require.JSONEq(t, string(result.RequestBody), string(upstream.lastBody))
 }
 
 func TestOpenAIGatewayServiceRecordUsage_MissingPricingRecordsZeroCostUsageLog(t *testing.T) {

@@ -4993,6 +4993,9 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	var usage *ClaudeUsage
 	var firstTokenMs *int
 	var clientDisconnect bool
+	var responseBody []byte
+	statusCode := resp.StatusCode
+	responseContentType := resp.Header.Get("Content-Type")
 	if reqStream {
 		streamResult, err := s.handleStreamingResponse(ctx, resp, c, account, startTime, originalModel, reqModel, shouldMimicClaudeCode)
 		if err != nil {
@@ -5006,23 +5009,38 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		usage = streamResult.usage
 		firstTokenMs = streamResult.firstTokenMs
 		clientDisconnect = streamResult.clientDisconnect
+		responseBody = streamResult.responseBody
+		if streamResult.statusCode > 0 {
+			statusCode = streamResult.statusCode
+		}
+		if streamResult.contentType != "" {
+			responseContentType = streamResult.contentType
+		}
 	} else {
-		usage, err = s.handleNonStreamingResponse(ctx, resp, c, account, originalModel, reqModel)
+		nonStreamResult, err := s.handleNonStreamingResponse(ctx, resp, c, account, originalModel, reqModel)
 		if err != nil {
 			return nil, err
 		}
+		usage = nonStreamResult.usage
+		responseBody = nonStreamResult.responseBody
+		statusCode = nonStreamResult.statusCode
+		responseContentType = nonStreamResult.contentType
 	}
 
 	return &ForwardResult{
-		RequestID:        resp.Header.Get("x-request-id"),
-		Usage:            *usage,
-		Model:            originalModel, // 使用原始模型用于计费和日志
-		UpstreamModel:    mappedModel,
-		Stream:           reqStream,
-		RequestBody:      cloneBytes(body),
-		Duration:         time.Since(startTime),
-		FirstTokenMs:     firstTokenMs,
-		ClientDisconnect: clientDisconnect,
+		RequestID:           resp.Header.Get("x-request-id"),
+		Usage:               *usage,
+		Model:               originalModel, // 使用原始模型用于计费和日志
+		UpstreamModel:       mappedModel,
+		Stream:              reqStream,
+		RequestBody:         cloneBytes(body),
+		ResponseBody:        cloneBytes(responseBody),
+		StatusCode:          statusCode,
+		ResponseContentType: responseContentType,
+		ResponseHeaders:     resp.Header.Clone(),
+		Duration:            time.Since(startTime),
+		FirstTokenMs:        firstTokenMs,
+		ClientDisconnect:    clientDisconnect,
 	}, nil
 }
 
@@ -5245,6 +5263,9 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 	var usage *ClaudeUsage
 	var firstTokenMs *int
 	var clientDisconnect bool
+	var responseBody []byte
+	statusCode := resp.StatusCode
+	responseContentType := resp.Header.Get("Content-Type")
 	if input.RequestStream {
 		streamResult, err := s.handleStreamingResponseAnthropicAPIKeyPassthrough(ctx, resp, c, account, input.StartTime, input.RequestModel)
 		if err != nil {
@@ -5253,26 +5274,41 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 		usage = streamResult.usage
 		firstTokenMs = streamResult.firstTokenMs
 		clientDisconnect = streamResult.clientDisconnect
+		responseBody = streamResult.responseBody
+		if streamResult.statusCode > 0 {
+			statusCode = streamResult.statusCode
+		}
+		if streamResult.contentType != "" {
+			responseContentType = streamResult.contentType
+		}
 	} else {
-		usage, err = s.handleNonStreamingResponseAnthropicAPIKeyPassthrough(ctx, resp, c, account)
+		nonStreamResult, err := s.handleNonStreamingResponseAnthropicAPIKeyPassthrough(ctx, resp, c, account)
 		if err != nil {
 			return nil, err
 		}
+		usage = nonStreamResult.usage
+		responseBody = nonStreamResult.responseBody
+		statusCode = nonStreamResult.statusCode
+		responseContentType = nonStreamResult.contentType
 	}
 	if usage == nil {
 		usage = &ClaudeUsage{}
 	}
 
 	return &ForwardResult{
-		RequestID:        resp.Header.Get("x-request-id"),
-		Usage:            *usage,
-		Model:            input.OriginalModel,
-		UpstreamModel:    input.RequestModel,
-		Stream:           input.RequestStream,
-		RequestBody:      cloneBytes(input.Body),
-		Duration:         time.Since(input.StartTime),
-		FirstTokenMs:     firstTokenMs,
-		ClientDisconnect: clientDisconnect,
+		RequestID:           resp.Header.Get("x-request-id"),
+		Usage:               *usage,
+		Model:               input.OriginalModel,
+		UpstreamModel:       input.RequestModel,
+		Stream:              input.RequestStream,
+		RequestBody:         cloneBytes(input.Body),
+		ResponseBody:        cloneBytes(responseBody),
+		StatusCode:          statusCode,
+		ResponseContentType: responseContentType,
+		ResponseHeaders:     resp.Header.Clone(),
+		Duration:            time.Since(input.StartTime),
+		FirstTokenMs:        firstTokenMs,
+		ClientDisconnect:    clientDisconnect,
 	}, nil
 }
 
@@ -5677,7 +5713,7 @@ func (s *GatewayService) handleNonStreamingResponseAnthropicAPIKeyPassthrough(
 	resp *http.Response,
 	c *gin.Context,
 	account *Account,
-) (*ClaudeUsage, error) {
+) (*claudeNonStreamingResult, error) {
 	if s.rateLimitService != nil {
 		s.rateLimitService.UpdateSessionWindow(ctx, account, resp.Header)
 	}
@@ -5696,7 +5732,12 @@ func (s *GatewayService) handleNonStreamingResponseAnthropicAPIKeyPassthrough(
 	}
 	body = reverseToolNamesIfPresent(c, body)
 	c.Data(resp.StatusCode, contentType, body)
-	return usage, nil
+	return &claudeNonStreamingResult{
+		usage:        usage,
+		responseBody: cloneBytes(body),
+		statusCode:   resp.StatusCode,
+		contentType:  contentType,
+	}, nil
 }
 
 func writeAnthropicPassthroughResponseHeaders(dst http.Header, src http.Header, filter *responseheaders.CompiledHeaderFilter) {
@@ -7415,6 +7456,16 @@ type streamingResult struct {
 	usage            *ClaudeUsage
 	firstTokenMs     *int
 	clientDisconnect bool // 客户端是否在流式传输过程中断开
+	responseBody     []byte
+	statusCode       int
+	contentType      string
+}
+
+type claudeNonStreamingResult struct {
+	usage        *ClaudeUsage
+	responseBody []byte
+	statusCode   int
+	contentType  string
 }
 
 func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, startTime time.Time, originalModel, mappedModel string, mimicClaudeCode bool) (*streamingResult, error) {
@@ -8039,7 +8090,7 @@ func (s *GatewayService) resolveCacheTTLUsageOverrideTarget(ctx context.Context,
 	return "", false
 }
 
-func (s *GatewayService) handleNonStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, originalModel, mappedModel string) (*ClaudeUsage, error) {
+func (s *GatewayService) handleNonStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, originalModel, mappedModel string) (*claudeNonStreamingResult, error) {
 	// 更新5h窗口状态
 	s.rateLimitService.UpdateSessionWindow(ctx, account, resp.Header)
 
@@ -8108,7 +8159,12 @@ func (s *GatewayService) handleNonStreamingResponse(ctx context.Context, resp *h
 	// 写入响应
 	c.Data(resp.StatusCode, contentType, body)
 
-	return &response.Usage, nil
+	return &claudeNonStreamingResult{
+		usage:        &response.Usage,
+		responseBody: cloneBytes(body),
+		statusCode:   resp.StatusCode,
+		contentType:  contentType,
+	}, nil
 }
 
 // replaceModelInResponseBody 替换响应体中的model字段

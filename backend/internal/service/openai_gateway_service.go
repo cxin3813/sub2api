@@ -3002,9 +3002,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 
 	httpInvalidEncryptedContentRetryTried := false
+	var lastUpstreamRequestBody []byte
 	for {
 		// Build upstream request
 		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
+		lastUpstreamRequestBody = cloneBytes(body)
 		upstreamReq, err := s.buildUpstreamRequest(upstreamCtx, c, account, body, token, reqStream, promptCacheKey, isCodexCLI)
 		releaseUpstreamCtx()
 		if err != nil {
@@ -3103,6 +3105,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		var firstTokenMs *int
 		imageCount := 0
 		var imageOutputSizes []string
+		var responseBody []byte
+		statusCode := resp.StatusCode
+		responseContentType := resp.Header.Get("Content-Type")
 		if reqStream {
 			streamResult, err := s.handleStreamingResponse(ctx, resp, c, account, startTime, originalModel, upstreamModel)
 			if err != nil {
@@ -3112,6 +3117,13 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			firstTokenMs = streamResult.firstTokenMs
 			imageCount = streamResult.imageCount
 			imageOutputSizes = streamResult.imageOutputSizes
+			responseBody = streamResult.responseBody
+			if streamResult.statusCode > 0 {
+				statusCode = streamResult.statusCode
+			}
+			if streamResult.contentType != "" {
+				responseContentType = streamResult.contentType
+			}
 		} else {
 			nonStreamResult, err := s.handleNonStreamingResponse(ctx, resp, c, account, originalModel, upstreamModel)
 			if err != nil {
@@ -3120,6 +3132,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			usage = nonStreamResult.usage
 			imageCount = nonStreamResult.imageCount
 			imageOutputSizes = nonStreamResult.imageOutputSizes
+			responseBody = nonStreamResult.responseBody
+			statusCode = nonStreamResult.statusCode
+			responseContentType = nonStreamResult.contentType
 		}
 
 		// Extract and save Codex usage snapshot from response headers (for OAuth accounts)
@@ -3134,17 +3149,21 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 
 		forwardResult := &OpenAIForwardResult{
-			RequestID:       resp.Header.Get("x-request-id"),
-			Usage:           *usage,
-			Model:           originalModel,
-			UpstreamModel:   upstreamModel,
-			ServiceTier:     serviceTier,
-			ReasoningEffort: reasoningEffort,
-			Stream:          reqStream,
-			OpenAIWSMode:    false,
-			ResponseHeaders: resp.Header.Clone(),
-			Duration:        time.Since(startTime),
-			FirstTokenMs:    firstTokenMs,
+			RequestID:           resp.Header.Get("x-request-id"),
+			Usage:               *usage,
+			Model:               originalModel,
+			UpstreamModel:       upstreamModel,
+			ServiceTier:         serviceTier,
+			ReasoningEffort:     reasoningEffort,
+			Stream:              reqStream,
+			OpenAIWSMode:        false,
+			ResponseHeaders:     resp.Header.Clone(),
+			RequestBody:         cloneBytes(lastUpstreamRequestBody),
+			ResponseBody:        cloneBytes(responseBody),
+			StatusCode:          statusCode,
+			ResponseContentType: responseContentType,
+			Duration:            time.Since(startTime),
+			FirstTokenMs:        firstTokenMs,
 		}
 		if imageCount > 0 {
 			forwardResult.ImageCount = imageCount
@@ -4612,6 +4631,9 @@ type openaiStreamingResult struct {
 	firstTokenMs     *int
 	imageCount       int
 	imageOutputSizes []string
+	responseBody     []byte
+	statusCode       int
+	contentType      string
 }
 
 type openaiNonStreamingResult struct {
@@ -4619,6 +4641,9 @@ type openaiNonStreamingResult struct {
 	usage            *OpenAIUsage
 	imageCount       int
 	imageOutputSizes []string
+	responseBody     []byte
+	statusCode       int
+	contentType      string
 }
 
 func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, startTime time.Time, originalModel, mappedModel string) (*openaiStreamingResult, error) {
@@ -4736,6 +4761,8 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 			firstTokenMs:     firstTokenMs,
 			imageCount:       imageCounter.Count(),
 			imageOutputSizes: imageCounter.Sizes(),
+			statusCode:       resp.StatusCode,
+			contentType:      "text/event-stream",
 		}
 	}
 	finalizeStream := func() (*openaiStreamingResult, error) {
@@ -5239,6 +5266,9 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 		usage:            usage,
 		imageCount:       countOpenAIResponseImageOutputsFromJSONBytes(body),
 		imageOutputSizes: collectOpenAIResponseImageOutputSizesFromJSONBytes(body),
+		responseBody:     cloneBytes(body),
+		statusCode:       resp.StatusCode,
+		contentType:      contentType,
 	}, nil
 }
 
@@ -5304,6 +5334,9 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 		usage:            usage,
 		imageCount:       countOpenAIImageOutputsFromSSEBody(bodyText),
 		imageOutputSizes: collectOpenAIImageOutputSizesFromSSEBody(bodyText),
+		responseBody:     cloneBytes(body),
+		statusCode:       resp.StatusCode,
+		contentType:      contentType,
 	}, nil
 }
 
