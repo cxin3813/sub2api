@@ -236,6 +236,7 @@ type OpenAIForwardResult struct {
 	ResponseHeaders     http.Header
 	RequestBody         []byte
 	ResponseBody        []byte
+	ResponseCapture     *GatewayBodyLogBodyCapture
 	StatusCode          int
 	ResponseContentType string
 	Duration            time.Duration
@@ -5954,6 +5955,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 			UsageLog:            usageLog,
 			RequestBody:         gatewayBodyLogRequestBody(input.RequestBody, result.RequestBody),
 			ResponseBody:        result.ResponseBody,
+			ResponseCapture:     result.ResponseCapture,
 			RequestContentType:  input.RequestContentType,
 			ResponseContentType: firstNonEmpty(result.ResponseContentType, result.ResponseHeaders.Get("Content-Type")),
 			StatusCode:          result.StatusCode,

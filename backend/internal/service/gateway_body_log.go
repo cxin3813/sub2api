@@ -74,6 +74,7 @@ type GatewayBodyLogCaptureInput struct {
 	UsageLog            *UsageLog
 	RequestBody         []byte
 	ResponseBody        []byte
+	ResponseCapture     *GatewayBodyLogBodyCapture
 	RequestContentType  string
 	ResponseContentType string
 	StatusCode          int
@@ -88,6 +89,13 @@ type GatewayBodyLogCaptureInput struct {
 	ClientRequestID     string
 	RequestHeaderJSON   []byte
 	ResponseHeaderJSON  []byte
+}
+
+type GatewayBodyLogBodyCapture struct {
+	Body      []byte
+	Bytes     int64
+	SHA256    string
+	Truncated bool
 }
 
 type GatewayBodyLogService struct {
@@ -177,9 +185,16 @@ func (s *GatewayBodyLogService) Capture(ctx context.Context, input GatewayBodyLo
 		log.RequestStoredAt = &now
 	}
 	if settings.CaptureResponse {
-		log.ResponseBodyBytes = int64(len(input.ResponseBody))
-		log.ResponseBodySHA256 = sha256Hex(input.ResponseBody)
-		log.ResponseBody, log.ResponseTruncated = truncateBody(input.ResponseBody, settings.MaxBytes)
+		if input.ResponseCapture != nil {
+			log.ResponseBodyBytes = input.ResponseCapture.Bytes
+			log.ResponseBodySHA256 = input.ResponseCapture.SHA256
+			log.ResponseBody, log.ResponseTruncated = truncateBody(input.ResponseCapture.Body, settings.MaxBytes)
+			log.ResponseTruncated = log.ResponseTruncated || input.ResponseCapture.Truncated
+		} else {
+			log.ResponseBodyBytes = int64(len(input.ResponseBody))
+			log.ResponseBodySHA256 = sha256Hex(input.ResponseBody)
+			log.ResponseBody, log.ResponseTruncated = truncateBody(input.ResponseBody, settings.MaxBytes)
+		}
 		now := time.Now()
 		log.ResponseStoredAt = &now
 	}

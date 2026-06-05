@@ -452,6 +452,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	clientOutputStarted := false
 	pendingSSE := make([]string, 0, 4)
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
+	streamCapture := newGatewayBodyLogStreamCapture(GatewayBodyLogMaxBytesLimit)
 
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
@@ -475,17 +476,33 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	}
 
 	resultWithUsage := func() *OpenAIForwardResult {
-		return &OpenAIForwardResult{
-			RequestID:       requestID,
-			Usage:           usage,
-			Model:           originalModel,
-			BillingModel:    billingModel,
-			UpstreamModel:   upstreamModel,
-			Stream:          true,
-			ResponseHeaders: resp.Header.Clone(),
-			Duration:        time.Since(startTime),
-			FirstTokenMs:    firstTokenMs,
+		responseCapture := streamCapture.Snapshot()
+		var responseBody []byte
+		if responseCapture != nil {
+			responseBody = responseCapture.Body
 		}
+		return &OpenAIForwardResult{
+			RequestID:           requestID,
+			Usage:               usage,
+			Model:               originalModel,
+			BillingModel:        billingModel,
+			UpstreamModel:       upstreamModel,
+			Stream:              true,
+			ResponseHeaders:     resp.Header.Clone(),
+			ResponseBody:        responseBody,
+			ResponseCapture:     responseCapture,
+			StatusCode:          http.StatusOK,
+			ResponseContentType: "text/event-stream",
+			Duration:            time.Since(startTime),
+			FirstTokenMs:        firstTokenMs,
+		}
+	}
+	writeClientSSE := func(sse string) error {
+		if _, err := fmt.Fprint(c.Writer, sse); err != nil {
+			return err
+		}
+		streamCapture.WriteString(sse)
+		return nil
 	}
 
 	processDataLine := func(payload string) bool {
@@ -534,7 +551,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 				if !clientOutputStarted {
 					writeStreamHeaders()
 					for _, pending := range pendingSSE {
-						if _, err := fmt.Fprint(c.Writer, pending); err != nil {
+						if err := writeClientSSE(pending); err != nil {
 							clientDisconnected = true
 							logger.L().Info("openai chat_completions stream: client disconnected while flushing pending chunks",
 								zap.String("request_id", requestID),
@@ -548,7 +565,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 						break
 					}
 				}
-				if _, err := fmt.Fprint(c.Writer, sse); err != nil {
+				if err := writeClientSSE(sse); err != nil {
 					clientDisconnected = true
 					logger.L().Info("openai chat_completions stream: client disconnected, continuing to drain upstream for billing",
 						zap.String("request_id", requestID),
@@ -578,7 +595,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 				if !clientOutputStarted {
 					writeStreamHeaders()
 					for _, pending := range pendingSSE {
-						if _, err := fmt.Fprint(c.Writer, pending); err != nil {
+						if err := writeClientSSE(pending); err != nil {
 							clientDisconnected = true
 							logger.L().Info("openai chat_completions stream: client disconnected during pending final flush",
 								zap.String("request_id", requestID),
@@ -592,7 +609,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 						break
 					}
 				}
-				if _, err := fmt.Fprint(c.Writer, sse); err != nil {
+				if err := writeClientSSE(sse); err != nil {
 					clientDisconnected = true
 					logger.L().Info("openai chat_completions stream: client disconnected during final flush",
 						zap.String("request_id", requestID),
@@ -608,7 +625,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			if len(pendingSSE) > 0 {
 				writeStreamHeaders()
 				for _, pending := range pendingSSE {
-					if _, err := fmt.Fprint(c.Writer, pending); err != nil {
+					if err := writeClientSSE(pending); err != nil {
 						clientDisconnected = true
 						logger.L().Info("openai chat_completions stream: client disconnected during final pending flush",
 							zap.String("request_id", requestID),
@@ -623,7 +640,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 		// Send [DONE] sentinel
 		if !clientDisconnected {
 			writeStreamHeaders()
-			if _, err := fmt.Fprint(c.Writer, "data: [DONE]\n\n"); err != nil {
+			if err := writeClientSSE("data: [DONE]\n\n"); err != nil {
 				clientDisconnected = true
 				logger.L().Info("openai chat_completions stream: client disconnected during done flush",
 					zap.String("request_id", requestID),

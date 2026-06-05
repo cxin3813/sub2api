@@ -4,6 +4,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -100,6 +102,37 @@ func TestGatewayBodyLogServiceCapture_TruncatesBodiesAndHashesOriginal(t *testin
 	require.NotEmpty(t, repo.upserted.RequestBodySHA256)
 	require.NotEmpty(t, repo.upserted.ResponseBodySHA256)
 	require.Equal(t, "text/event-stream", repo.upserted.ResponseContentType)
+}
+
+func TestGatewayBodyLogServiceCapture_UsesExplicitResponseCaptureMetadata(t *testing.T) {
+	repo := &gatewayBodyLogRepoStub{}
+	settings := NewSettingService(&settingAntigravityUARepoStub{values: map[string]string{
+		SettingKeyGatewayBodyLogEnabled:         "true",
+		SettingKeyGatewayBodyLogMaxBytes:        "5",
+		SettingKeyGatewayBodyLogCaptureRequest:  "true",
+		SettingKeyGatewayBodyLogCaptureResponse: "true",
+	}}, &config.Config{})
+	svc := NewGatewayBodyLogService(repo, settings)
+	fullStream := []byte("data: first\n\ndata: second\n\n")
+	sum := sha256.Sum256(fullStream)
+
+	err := svc.Capture(context.Background(), GatewayBodyLogCaptureInput{
+		UsageLog: &UsageLog{ID: 25, RequestID: "req_stream_capture", APIKeyID: 9},
+		ResponseCapture: &GatewayBodyLogBodyCapture{
+			Body:      []byte("data: first"),
+			Bytes:     int64(len(fullStream)),
+			SHA256:    hex.EncodeToString(sum[:]),
+			Truncated: true,
+		},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, repo.upserted)
+	require.Equal(t, []byte("data:"), repo.upserted.ResponseBody)
+	require.Equal(t, int64(len(fullStream)), repo.upserted.ResponseBodyBytes)
+	require.Equal(t, hex.EncodeToString(sum[:]), repo.upserted.ResponseBodySHA256)
+	require.True(t, repo.upserted.ResponseTruncated)
+	require.NotNil(t, repo.upserted.ResponseStoredAt)
 }
 
 func TestGatewayBodyLogServiceCapture_DisabledRequestClearsAllDerivedFields(t *testing.T) {

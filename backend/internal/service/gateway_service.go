@@ -554,6 +554,7 @@ type ForwardResult struct {
 	ResponseHeaders     http.Header
 	RequestBody         []byte
 	ResponseBody        []byte
+	ResponseCapture     *GatewayBodyLogBodyCapture
 	StatusCode          int
 	ResponseContentType string
 }
@@ -8950,6 +8951,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 			UsageLog:            usageLog,
 			RequestBody:         gatewayBodyLogRequestBody(input.RequestBody, result.RequestBody),
 			ResponseBody:        result.ResponseBody,
+			ResponseCapture:     result.ResponseCapture,
 			RequestContentType:  input.RequestContentType,
 			ResponseContentType: firstNonEmpty(result.ResponseContentType, result.ResponseHeaders.Get("Content-Type")),
 			StatusCode:          result.StatusCode,
