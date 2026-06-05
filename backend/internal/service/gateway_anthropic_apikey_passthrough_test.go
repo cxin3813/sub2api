@@ -188,6 +188,15 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardStreamPreservesBodyAnd
 	require.NotContains(t, rec.Body.String(), `"cache_read_input_tokens":7`, "透传输出不应被网关改写")
 	require.Equal(t, 7, result.Usage.CacheReadInputTokens, "计费 usage 解析应保留 cached_tokens 兼容")
 	require.Empty(t, rec.Header().Get("Set-Cookie"), "响应头应经过安全过滤")
+	require.Equal(t, http.StatusOK, result.StatusCode)
+	require.Equal(t, "text/event-stream", result.ResponseContentType)
+	require.Equal(t, rec.Body.String(), string(result.ResponseBody))
+	require.NotEmpty(t, result.ResponseBody)
+	require.NotNil(t, result.ResponseCapture)
+	require.Equal(t, int64(len(result.ResponseBody)), result.ResponseCapture.Bytes)
+	require.Equal(t, result.ResponseBody, result.ResponseCapture.Body)
+	require.Equal(t, sha256Hex(result.ResponseBody), result.ResponseCapture.SHA256)
+	require.False(t, result.ResponseCapture.Truncated)
 }
 
 func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardCountTokensPreservesBody(t *testing.T) {

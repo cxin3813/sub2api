@@ -4995,6 +4995,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	var firstTokenMs *int
 	var clientDisconnect bool
 	var responseBody []byte
+	var responseCapture *GatewayBodyLogBodyCapture
 	statusCode := resp.StatusCode
 	responseContentType := resp.Header.Get("Content-Type")
 	if reqStream {
@@ -5011,6 +5012,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		firstTokenMs = streamResult.firstTokenMs
 		clientDisconnect = streamResult.clientDisconnect
 		responseBody = streamResult.responseBody
+		responseCapture = streamResult.responseCapture
 		if streamResult.statusCode > 0 {
 			statusCode = streamResult.statusCode
 		}
@@ -5036,6 +5038,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		Stream:              reqStream,
 		RequestBody:         cloneBytes(body),
 		ResponseBody:        cloneBytes(responseBody),
+		ResponseCapture:     responseCapture,
 		StatusCode:          statusCode,
 		ResponseContentType: responseContentType,
 		ResponseHeaders:     resp.Header.Clone(),
@@ -5265,6 +5268,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 	var firstTokenMs *int
 	var clientDisconnect bool
 	var responseBody []byte
+	var responseCapture *GatewayBodyLogBodyCapture
 	statusCode := resp.StatusCode
 	responseContentType := resp.Header.Get("Content-Type")
 	if input.RequestStream {
@@ -5276,6 +5280,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 		firstTokenMs = streamResult.firstTokenMs
 		clientDisconnect = streamResult.clientDisconnect
 		responseBody = streamResult.responseBody
+		responseCapture = streamResult.responseCapture
 		if streamResult.statusCode > 0 {
 			statusCode = streamResult.statusCode
 		}
@@ -5304,6 +5309,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 		Stream:              input.RequestStream,
 		RequestBody:         cloneBytes(input.Body),
 		ResponseBody:        cloneBytes(responseBody),
+		ResponseCapture:     responseCapture,
 		StatusCode:          statusCode,
 		ResponseContentType: responseContentType,
 		ResponseHeaders:     resp.Header.Clone(),
@@ -5411,11 +5417,38 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 	if !ok {
 		return nil, errors.New("streaming not supported")
 	}
+	streamCapture := newGatewayBodyLogStreamCapture(GatewayBodyLogMaxBytesLimit)
+	writeClientString := func(value string) error {
+		n, err := io.WriteString(w, value)
+		if n > 0 {
+			if n > len(value) {
+				n = len(value)
+			}
+			streamCapture.WriteString(value[:n])
+		}
+		return err
+	}
 
 	usage := &ClaudeUsage{}
 	var firstTokenMs *int
 	clientDisconnected := false
 	sawTerminalEvent := false
+	resultWithUsage := func() *streamingResult {
+		responseCapture := streamCapture.Snapshot()
+		var responseBody []byte
+		if responseCapture != nil {
+			responseBody = responseCapture.Body
+		}
+		return &streamingResult{
+			usage:            usage,
+			firstTokenMs:     firstTokenMs,
+			clientDisconnect: clientDisconnected,
+			responseBody:     responseBody,
+			responseCapture:  responseCapture,
+			statusCode:       resp.StatusCode,
+			contentType:      contentType,
+		}
+	}
 
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
@@ -5498,28 +5531,29 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 					if clientDisconnected && streamInterval > 0 {
 						lastRead := time.Unix(0, atomic.LoadInt64(&lastReadAt))
 						if time.Since(lastRead) >= streamInterval {
-							return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, fmt.Errorf("stream usage incomplete after timeout")
+							return resultWithUsage(), fmt.Errorf("stream usage incomplete after timeout")
 						}
 					}
-					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, fmt.Errorf("stream usage incomplete: missing terminal event")
+					return resultWithUsage(), fmt.Errorf("stream usage incomplete: missing terminal event")
 				}
-				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
+				return resultWithUsage(), nil
 			}
 			if ev.err != nil {
 				if sawTerminalEvent {
-					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
+					return resultWithUsage(), nil
 				}
 				if clientDisconnected {
-					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, fmt.Errorf("stream usage incomplete after disconnect: %w", ev.err)
+					return resultWithUsage(), fmt.Errorf("stream usage incomplete after disconnect: %w", ev.err)
 				}
 				if errors.Is(ev.err, context.Canceled) || errors.Is(ev.err, context.DeadlineExceeded) {
-					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, fmt.Errorf("stream usage incomplete: %w", ev.err)
+					clientDisconnected = true
+					return resultWithUsage(), fmt.Errorf("stream usage incomplete: %w", ev.err)
 				}
 				if errors.Is(ev.err, bufio.ErrTooLong) {
 					logger.LegacyPrintf("service.gateway", "[Anthropic passthrough] SSE line too long: account=%d max_size=%d error=%v", account.ID, maxLineSize, ev.err)
-					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, ev.err
+					return resultWithUsage(), ev.err
 				}
-				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, fmt.Errorf("stream read error: %w", ev.err)
+				return resultWithUsage(), fmt.Errorf("stream read error: %w", ev.err)
 			}
 
 			line := ev.line
@@ -5542,10 +5576,10 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 
 			if !clientDisconnected {
 				restored := string(reverseToolNamesIfPresent(c, []byte(line)))
-				if _, err := io.WriteString(w, restored); err != nil {
+				if err := writeClientString(restored); err != nil {
 					clientDisconnected = true
 					logger.LegacyPrintf("service.gateway", "[Anthropic passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
-				} else if _, err := io.WriteString(w, "\n"); err != nil {
+				} else if err := writeClientString("\n"); err != nil {
 					clientDisconnected = true
 					logger.LegacyPrintf("service.gateway", "[Anthropic passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
 				} else if line == "" {
@@ -5564,13 +5598,13 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 				continue
 			}
 			if clientDisconnected {
-				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, fmt.Errorf("stream usage incomplete after timeout")
+				return resultWithUsage(), fmt.Errorf("stream usage incomplete after timeout")
 			}
 			logger.LegacyPrintf("service.gateway", "[Anthropic passthrough] Stream data interval timeout: account=%d model=%s interval=%s", account.ID, model, streamInterval)
 			if s.rateLimitService != nil {
 				s.rateLimitService.HandleStreamTimeout(ctx, account, model)
 			}
-			return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, fmt.Errorf("stream data interval timeout")
+			return resultWithUsage(), fmt.Errorf("stream data interval timeout")
 
 		case <-keepaliveCh:
 			if clientDisconnected || inPartialEvent {
@@ -5579,7 +5613,7 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 			if time.Since(lastDataAt) < keepaliveInterval {
 				continue
 			}
-			if _, err := fmt.Fprint(w, "event: ping\ndata: {\"type\": \"ping\"}\n\n"); err != nil {
+			if err := writeClientString("event: ping\ndata: {\"type\": \"ping\"}\n\n"); err != nil {
 				clientDisconnected = true
 				logger.LegacyPrintf("service.gateway", "[Anthropic passthrough] Client disconnected during keepalive ping, continue draining upstream for usage: account=%d", account.ID)
 				continue
@@ -7458,6 +7492,7 @@ type streamingResult struct {
 	firstTokenMs     *int
 	clientDisconnect bool // 客户端是否在流式传输过程中断开
 	responseBody     []byte
+	responseCapture  *GatewayBodyLogBodyCapture
 	statusCode       int
 	contentType      string
 }
@@ -7492,6 +7527,17 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		return nil, errors.New("streaming not supported")
+	}
+	streamCapture := newGatewayBodyLogStreamCapture(GatewayBodyLogMaxBytesLimit)
+	writeClientString := func(value string) error {
+		n, err := io.WriteString(w, value)
+		if n > 0 {
+			if n > len(value) {
+				n = len(value)
+			}
+			streamCapture.WriteString(value[:n])
+		}
+		return err
 	}
 
 	usage := &ClaudeUsage{}
@@ -7592,13 +7638,29 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 			// json.Marshal 不可能在已知 string-only 输入上失败，保守 fallback
 			body = []byte(fmt.Sprintf(`{"type":"error","error":{"type":%q,"message":%q}}`, reason, message))
 		}
-		_, _ = fmt.Fprintf(w, "event: error\ndata: %s\n\n", body)
+		_ = writeClientString(fmt.Sprintf("event: error\ndata: %s\n\n", body))
 		flusher.Flush()
 	}
 
 	needModelReplace := originalModel != mappedModel
 	clientDisconnected := false // 客户端断开标志，断开后继续读取上游以获取完整usage
 	sawTerminalEvent := false
+	resultWithUsage := func() *streamingResult {
+		responseCapture := streamCapture.Snapshot()
+		var responseBody []byte
+		if responseCapture != nil {
+			responseBody = responseCapture.Body
+		}
+		return &streamingResult{
+			usage:            usage,
+			firstTokenMs:     firstTokenMs,
+			clientDisconnect: clientDisconnected,
+			responseBody:     responseBody,
+			responseCapture:  responseCapture,
+			statusCode:       resp.StatusCode,
+			contentType:      "text/event-stream",
+		}
+	}
 
 	pendingEventLines := make([]string, 0, 4)
 
@@ -7733,27 +7795,28 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 			if !ok {
 				// 上游完成，返回结果
 				if !sawTerminalEvent {
-					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, fmt.Errorf("stream usage incomplete: missing terminal event")
+					return resultWithUsage(), fmt.Errorf("stream usage incomplete: missing terminal event")
 				}
-				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
+				return resultWithUsage(), nil
 			}
 			if ev.err != nil {
 				if sawTerminalEvent {
-					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
+					return resultWithUsage(), nil
 				}
 				// 检测 context 取消（客户端断开会导致 context 取消，进而影响上游读取）
 				if errors.Is(ev.err, context.Canceled) || errors.Is(ev.err, context.DeadlineExceeded) {
-					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, fmt.Errorf("stream usage incomplete: %w", ev.err)
+					clientDisconnected = true
+					return resultWithUsage(), fmt.Errorf("stream usage incomplete: %w", ev.err)
 				}
 				// 客户端已通过写入失败检测到断开，上游也出错了，返回已收集的 usage
 				if clientDisconnected {
-					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, fmt.Errorf("stream usage incomplete after disconnect: %w", ev.err)
+					return resultWithUsage(), fmt.Errorf("stream usage incomplete after disconnect: %w", ev.err)
 				}
 				// 客户端未断开，正常的错误处理
 				if errors.Is(ev.err, bufio.ErrTooLong) {
 					logger.LegacyPrintf("service.gateway", "SSE line too long: account=%d max_size=%d error=%v", account.ID, maxLineSize, ev.err)
 					sendErrorEvent("response_too_large", fmt.Sprintf("upstream SSE line exceeded %d bytes", maxLineSize))
-					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, ev.err
+					return resultWithUsage(), ev.err
 				}
 				// 上游中途读错误（unexpected EOF / connection reset 等，常见于 HTTP/2 GOAWAY）：
 				// 若尚未向客户端写过任何字节，包成 UpstreamFailoverError 让 handler 层走 failover/重试。
@@ -7778,7 +7841,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 					}
 				}
 				sendErrorEvent("stream_read_error", disconnectMsg)
-				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, fmt.Errorf("stream read error: %w", ev.err)
+				return resultWithUsage(), fmt.Errorf("stream read error: %w", ev.err)
 			}
 			line := ev.line
 			trimmed := strings.TrimSpace(line)
@@ -7792,7 +7855,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				pendingEventLines = pendingEventLines[:0]
 				if err != nil {
 					if clientDisconnected {
-						return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, nil
+						return resultWithUsage(), nil
 					}
 					return nil, err
 				}
@@ -7800,7 +7863,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				for _, block := range outputBlocks {
 					if !clientDisconnected {
 						restored := reverseToolNamesIfPresent(c, []byte(block))
-						if _, werr := fmt.Fprint(w, string(restored)); werr != nil {
+						if werr := writeClientString(string(restored)); werr != nil {
 							clientDisconnected = true
 							logger.LegacyPrintf("service.gateway", "Client disconnected during streaming, continuing to drain upstream for billing")
 							break
@@ -7829,7 +7892,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				continue
 			}
 			if clientDisconnected {
-				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, fmt.Errorf("stream usage incomplete after timeout")
+				return resultWithUsage(), fmt.Errorf("stream usage incomplete after timeout")
 			}
 			logger.LegacyPrintf("service.gateway", "Stream data interval timeout: account=%d model=%s interval=%s", account.ID, originalModel, streamInterval)
 			// 处理流超时，可能标记账户为临时不可调度或错误状态
@@ -7837,7 +7900,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				s.rateLimitService.HandleStreamTimeout(ctx, account, originalModel)
 			}
 			sendErrorEvent("stream_timeout", fmt.Sprintf("upstream stream idle for %s", streamInterval))
-			return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, fmt.Errorf("stream data interval timeout")
+			return resultWithUsage(), fmt.Errorf("stream data interval timeout")
 
 		case <-keepaliveCh:
 			if clientDisconnected {
@@ -7848,7 +7911,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 			}
 			// SSE ping 事件：Anthropic 原生格式，客户端会正确处理，
 			// 同时保持连接活跃防止 Cloudflare Tunnel 等代理断开
-			if _, werr := fmt.Fprint(w, "event: ping\ndata: {\"type\": \"ping\"}\n\n"); werr != nil {
+			if werr := writeClientString("event: ping\ndata: {\"type\": \"ping\"}\n\n"); werr != nil {
 				clientDisconnected = true
 				logger.LegacyPrintf("service.gateway", "Client disconnected during keepalive ping, continuing to drain upstream for billing")
 				continue

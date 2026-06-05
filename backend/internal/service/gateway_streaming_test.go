@@ -166,6 +166,45 @@ func TestHandleStreamingResponse_CacheTokens(t *testing.T) {
 	require.Equal(t, 30, result.usage.CacheReadInputTokens)
 }
 
+func TestHandleStreamingResponse_CapturesClientSSEBodyMetadata(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := newMinimalGatewayService()
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+	pr, pw := io.Pipe()
+	resp := &http.Response{
+		StatusCode: http.StatusAccepted,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream; charset=utf-8"}},
+		Body:       pr,
+	}
+
+	go func() {
+		defer func() { _ = pw.Close() }()
+		_, _ = pw.Write([]byte("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":5}}}\n\n"))
+		_, _ = pw.Write([]byte("data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":3}}\n\n"))
+		_, _ = pw.Write([]byte("data: [DONE]\n\n"))
+	}()
+
+	result, err := svc.handleStreamingResponse(context.Background(), resp, c, &Account{ID: 1}, time.Now(), "model", "model", false)
+	_ = pr.Close()
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, http.StatusAccepted, result.statusCode)
+	require.Equal(t, "text/event-stream", result.contentType)
+	require.Equal(t, rec.Body.String(), string(result.responseBody))
+	require.NotEmpty(t, result.responseBody)
+	require.NotNil(t, result.responseCapture)
+	require.Equal(t, int64(len(result.responseBody)), result.responseCapture.Bytes)
+	require.Equal(t, result.responseBody, result.responseCapture.Body)
+	require.Equal(t, sha256Hex(result.responseBody), result.responseCapture.SHA256)
+	require.False(t, result.responseCapture.Truncated)
+	require.Contains(t, string(result.responseBody), "message_start")
+	require.Contains(t, string(result.responseBody), "message_delta")
+}
+
 func TestHandleStreamingResponse_EmptyStream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := newMinimalGatewayService()
