@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"net/http"
@@ -833,6 +834,66 @@ func TestOpenAIGatewayService_OAuthPassthrough_ResponseHeadersAllowXCodex(t *tes
 	require.Equal(t, "34", rec.Header().Get("x-codex-secondary-used-percent"))
 	require.Equal(t, "12", result.ResponseHeaders.Get("x-codex-primary-used-percent"))
 	require.Equal(t, "34", result.ResponseHeaders.Get("x-codex-secondary-used-percent"))
+}
+
+func TestOpenAIGatewayService_OAuthPassthrough_StreamCapturesResponsePayload(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(nil))
+	c.Request.Header.Set("User-Agent", "codex_cli_rs/0.1.0")
+
+	originalBody := []byte(`{"model":"gpt-5.2","stream":true,"input":[{"type":"text","text":"hi"}]}`)
+	upstreamSSE := strings.Join([]string{
+		`data: {"type":"response.output_text.delta","delta":"h"}`,
+		"",
+		`data: {"type":"response.completed","response":{"id":"resp_passthrough_capture","usage":{"input_tokens":3,"output_tokens":2,"input_tokens_details":{"cached_tokens":1}}}}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusAccepted,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream; charset=utf-8"}, "x-request-id": []string{"rid-passthrough-capture"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamSSE)),
+	}}
+
+	svc := &OpenAIGatewayService{
+		cfg:          &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
+		httpUpstream: upstream,
+	}
+	account := &Account{
+		ID:             123,
+		Name:           "acc",
+		Platform:       PlatformOpenAI,
+		Type:           AccountTypeOAuth,
+		Concurrency:    1,
+		Credentials:    map[string]any{"access_token": "oauth-token", "chatgpt_account_id": "chatgpt-acc"},
+		Extra:          map[string]any{"openai_passthrough": true},
+		Status:         StatusActive,
+		Schedulable:    true,
+		RateMultiplier: f64p(1),
+	}
+
+	result, err := svc.Forward(context.Background(), c, account, originalBody)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, http.StatusAccepted, result.StatusCode)
+	require.Equal(t, "text/event-stream; charset=utf-8", result.ResponseContentType)
+	require.Equal(t, rec.Body.String(), string(result.ResponseBody))
+	require.NotEmpty(t, result.ResponseBody)
+	require.NotNil(t, result.ResponseCapture)
+	require.Equal(t, int64(len(result.ResponseBody)), result.ResponseCapture.Bytes)
+	require.Equal(t, result.ResponseBody, result.ResponseCapture.Body)
+	require.Equal(t, fmt.Sprintf("%x", sha256.Sum256(result.ResponseBody)), result.ResponseCapture.SHA256)
+	require.False(t, result.ResponseCapture.Truncated)
+	require.Contains(t, string(result.ResponseBody), "response.output_text.delta")
+	require.Contains(t, string(result.ResponseBody), "response.completed")
+	require.Equal(t, 3, result.Usage.InputTokens)
+	require.Equal(t, 2, result.Usage.OutputTokens)
+	require.Equal(t, 1, result.Usage.CacheReadInputTokens)
 }
 
 func TestOpenAIGatewayService_OAuthPassthrough_UpstreamErrorIncludesPassthroughFlag(t *testing.T) {

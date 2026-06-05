@@ -1231,6 +1231,9 @@ func TestOpenAIStreamingPreambleKeepaliveUsesDownstreamIdle(t *testing.T) {
 	require.NotNil(t, result)
 	require.Contains(t, rec.Body.String(), ":\n\n")
 	require.Contains(t, rec.Body.String(), "response.completed")
+	require.NotNil(t, result.responseCapture)
+	require.Contains(t, string(result.responseCapture.Body), ":\n\n")
+	require.Equal(t, int64(len(result.responseBody)), result.responseCapture.Bytes)
 }
 
 func TestOpenAIStreamingPolicyResponseFailedBeforeOutputPassesThrough(t *testing.T) {

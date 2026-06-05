@@ -3,7 +3,9 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -569,6 +571,57 @@ func TestOpenAIGatewayServiceForwardReturnsFinalRequestAndResponsePayloads(t *te
 	require.Equal(t, "gpt-5.1", gjson.GetBytes(result.RequestBody, "model").String())
 	require.Equal(t, "hello", gjson.GetBytes(result.RequestBody, "input").String())
 	require.JSONEq(t, string(result.RequestBody), string(upstream.lastBody))
+}
+
+func TestOpenAIGatewayServiceForwardNativeResponsesStreamCapturesResponsePayload(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	requestBody := []byte(`{"model":"gpt-5.1","input":"hello","stream":true}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(requestBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstreamSSE := strings.Join([]string{
+		`data: {"type":"response.output_text.delta","delta":"hello"}`,
+		"",
+		`data: {"type":"response.completed","response":{"id":"resp_native_stream","model":"gpt-5.1","usage":{"input_tokens":4,"output_tokens":6,"total_tokens":10}}}`,
+		"",
+	}, "\n")
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusAccepted,
+		Header: http.Header{
+			"Content-Type": []string{"text/event-stream; charset=utf-8"},
+			"X-Request-Id": []string{"upstream-native-stream"},
+		},
+		Body: io.NopCloser(strings.NewReader(upstreamSSE)),
+	}}
+	svc := &OpenAIGatewayService{
+		cfg:          &config.Config{},
+		httpUpstream: upstream,
+	}
+
+	result, err := svc.Forward(context.Background(), c, &Account{
+		ID:          3007,
+		Type:        AccountTypeAPIKey,
+		Platform:    PlatformOpenAI,
+		Credentials: map[string]any{"api_key": "sk-upstream-test"},
+	}, requestBody)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, http.StatusAccepted, result.StatusCode)
+	require.Equal(t, "text/event-stream", result.ResponseContentType)
+	require.Equal(t, rec.Body.String(), string(result.ResponseBody))
+	require.NotEmpty(t, result.ResponseBody)
+	require.NotNil(t, result.ResponseCapture)
+	require.Equal(t, int64(len(result.ResponseBody)), result.ResponseCapture.Bytes)
+	require.Equal(t, result.ResponseBody, result.ResponseCapture.Body)
+	require.Equal(t, fmt.Sprintf("%x", sha256.Sum256(result.ResponseBody)), result.ResponseCapture.SHA256)
+	require.False(t, result.ResponseCapture.Truncated)
+	require.Contains(t, string(result.ResponseBody), "response.output_text.delta")
+	require.Contains(t, string(result.ResponseBody), "response.completed")
+	require.Equal(t, 4, result.Usage.InputTokens)
+	require.Equal(t, 6, result.Usage.OutputTokens)
 }
 
 func TestOpenAIGatewayServiceRecordUsage_MissingPricingRecordsZeroCostUsageLog(t *testing.T) {
