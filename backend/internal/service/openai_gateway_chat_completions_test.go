@@ -323,6 +323,68 @@ func TestForwardAsChatCompletions_StreamingResultCapturesClientSSEBodyMetadata(t
 	require.Contains(t, string(result.ResponseBody), `"choices"`)
 	require.Contains(t, string(result.ResponseBody), "data: [DONE]")
 	require.Equal(t, "rid_chat_capture", result.ResponseHeaders.Get("x-request-id"))
+	require.NotNil(t, result.ResponseCapture)
+	require.Equal(t, int64(len(rec.Body.String())), result.ResponseCapture.Bytes)
+	require.Equal(t, sha256Hex([]byte(rec.Body.String())), result.ResponseCapture.SHA256)
+	require.False(t, result.ResponseCapture.Truncated)
+}
+
+func TestForwardAsChatCompletions_StreamingResultCapturesKeepaliveSSE(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"hello"}],"stream":true}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	pr, pw := io.Pipe()
+	go func() {
+		_, _ = pw.Write([]byte(`data: {"type":"response.output_text.delta","delta":"hello"}` + "\n\n"))
+		time.Sleep(1200 * time.Millisecond)
+		_, _ = pw.Write([]byte(`data: {"type":"response.completed","response":{"id":"resp_keepalive","object":"response","model":"gpt-5.4","status":"completed","output":[{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"hello"}]}],"usage":{"input_tokens":13,"output_tokens":7,"total_tokens":20,"input_tokens_details":{"cached_tokens":5}}}}` + "\n\n"))
+		_ = pw.Close()
+	}()
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "X-Request-Id": []string{"rid_chat_keepalive"}},
+		Body:       pr,
+	}}
+
+	svc := &OpenAIGatewayService{
+		cfg: &config.Config{
+			Gateway: config.GatewayConfig{
+				StreamKeepaliveInterval: 1,
+			},
+			Security: config.SecurityConfig{
+				URLAllowlist: config.URLAllowlistConfig{
+					Enabled:           false,
+					AllowInsecureHTTP: true,
+				},
+			},
+		},
+		httpUpstream: upstream,
+	}
+	account := &Account{
+		ID:          1,
+		Name:        "openai-oauth",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"access_token":       "oauth-token",
+			"chatgpt_account_id": "chatgpt-acc",
+		},
+	}
+
+	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "gpt-5.1")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Contains(t, rec.Body.String(), ":\n\n")
+	require.NotNil(t, result.ResponseCapture)
+	require.Equal(t, rec.Body.String(), string(result.ResponseBody))
+	require.Equal(t, int64(len(rec.Body.String())), result.ResponseCapture.Bytes)
+	require.Equal(t, sha256Hex([]byte(rec.Body.String())), result.ResponseCapture.SHA256)
 }
 
 func TestForwardAsChatCompletions_StreamsTopLevelTerminalUsage(t *testing.T) {

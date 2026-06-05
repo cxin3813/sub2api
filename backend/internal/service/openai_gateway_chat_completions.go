@@ -498,10 +498,16 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 		}
 	}
 	writeClientSSE := func(sse string) error {
-		if _, err := fmt.Fprint(c.Writer, sse); err != nil {
+		n, err := fmt.Fprint(c.Writer, sse)
+		if n > 0 {
+			if n > len(sse) {
+				n = len(sse)
+			}
+			streamCapture.WriteString(sse[:n])
+		}
+		if err != nil {
 			return err
 		}
-		streamCapture.WriteString(sse)
 		return nil
 	}
 
@@ -811,7 +817,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			}
 			// Send SSE comment as keepalive
 			writeStreamHeaders()
-			if _, err := fmt.Fprint(c.Writer, ":\n\n"); err != nil {
+			if err := writeClientSSE(":\n\n"); err != nil {
 				logger.L().Info("openai chat_completions stream: client disconnected during keepalive",
 					zap.String("request_id", requestID),
 				)
