@@ -208,34 +208,6 @@ func applyOpenAIAccountTestUserAgent(req *http.Request, account *Account, fallba
 	}
 }
 
-func applyOpenAIAccountTestCodexResponsesHeaders(req *http.Request, account *Account) {
-	if req == nil || account == nil || !account.IsOpenAI() {
-		return
-	}
-	if !openai.IsCodexOfficialClientByHeaders(req.Header.Get("User-Agent"), req.Header.Get("originator")) {
-		return
-	}
-	if req.Header.Get("Accept") == "" {
-		req.Header.Set("Accept", "text/event-stream")
-	}
-	if req.Header.Get("OpenAI-Beta") == "" {
-		req.Header.Set("OpenAI-Beta", "responses=experimental")
-	}
-	if req.Header.Get("originator") == "" {
-		req.Header.Set("originator", "codex_cli_rs")
-	}
-	if req.Header.Get("Version") == "" {
-		req.Header.Set("Version", codexCLIVersion)
-	}
-	sessionID := fmt.Sprintf("sub2api-test-openai-%d", account.ID)
-	if req.Header.Get("session_id") == "" {
-		req.Header.Set("session_id", sessionID)
-	}
-	if req.Header.Get("conversation_id") == "" {
-		req.Header.Set("conversation_id", sessionID)
-	}
-}
-
 // testClaudeAccountConnection tests an Anthropic Claude account's connection
 func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account *Account, modelID string) error {
 	ctx := c.Request.Context()
@@ -611,7 +583,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	c.Writer.Flush()
 
 	// Create OpenAI Responses API payload
-	payload := createOpenAITestPayload(testModelID, isOAuth || openai.IsCodexOfficialClientRequest(account.GetOpenAIUserAgent()))
+	payload := createOpenAITestPayload(testModelID, isOAuth)
 	payloadBytes, _ := json.Marshal(payload)
 
 	// Send test_start event
@@ -627,7 +599,6 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+authToken)
 	applyOpenAIAccountTestUserAgent(req, account, "")
-	applyOpenAIAccountTestCodexResponsesHeaders(req, account)
 
 	// Set OAuth-specific headers for ChatGPT internal API
 	if isOAuth {

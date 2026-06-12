@@ -376,7 +376,7 @@ data: {"type":"response.completed"}
 	require.Contains(t, recorder.Body.String(), `"success":true`)
 }
 
-func TestAccountTestService_OpenAIAPIKeyResponsesCodexDesktopUserAgentAddsCodexHeaders(t *testing.T) {
+func TestAccountTestService_OpenAIAPIKeyResponsesCodexDesktopUserAgentDoesNotAddCodexHeaders(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, recorder := newTestContext()
 
@@ -411,13 +411,13 @@ data: {"type":"response.completed"}
 	require.NoError(t, err)
 	require.NotNil(t, upstream.lastReq)
 	require.Equal(t, "Codex Desktop/0.140.0-alpha.2 (Mac OS 26.3.1; arm64) unknown (Codex Desktop; 26.609.30741)", upstream.lastReq.Header.Get("User-Agent"))
-	require.Equal(t, "responses=experimental", upstream.lastReq.Header.Get("OpenAI-Beta"))
-	require.Equal(t, "codex_cli_rs", upstream.lastReq.Header.Get("originator"))
-	require.Equal(t, codexCLIVersion, upstream.lastReq.Header.Get("Version"))
-	require.NotEmpty(t, upstream.lastReq.Header.Get("session_id"))
-	require.Equal(t, upstream.lastReq.Header.Get("session_id"), upstream.lastReq.Header.Get("conversation_id"))
-	require.True(t, gjson.GetBytes(upstream.lastBody, "store").Exists())
-	require.False(t, gjson.GetBytes(upstream.lastBody, "store").Bool())
+	require.Empty(t, upstream.lastReq.Header.Get("Accept"))
+	require.Empty(t, upstream.lastReq.Header.Get("OpenAI-Beta"))
+	require.Empty(t, upstream.lastReq.Header.Get("originator"))
+	require.Empty(t, upstream.lastReq.Header.Get("Version"))
+	require.Empty(t, upstream.lastReq.Header.Get("session_id"))
+	require.Empty(t, upstream.lastReq.Header.Get("conversation_id"))
+	require.False(t, gjson.GetBytes(upstream.lastBody, "store").Exists())
 	require.Contains(t, recorder.Body.String(), `"success":true`)
 }
 
