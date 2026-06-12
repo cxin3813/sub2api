@@ -413,6 +413,7 @@ data: {"type":"response.completed"}
 	require.Equal(t, "Codex Desktop/0.140.0-alpha.2 (Mac OS 26.3.1; arm64) unknown (Codex Desktop; 26.609.30741)", upstream.lastReq.Header.Get("User-Agent"))
 	require.Equal(t, "responses=experimental", upstream.lastReq.Header.Get("OpenAI-Beta"))
 	require.Equal(t, "codex_cli_rs", upstream.lastReq.Header.Get("originator"))
+	require.Equal(t, codexCLIVersion, upstream.lastReq.Header.Get("Version"))
 	require.NotEmpty(t, upstream.lastReq.Header.Get("session_id"))
 	require.Equal(t, upstream.lastReq.Header.Get("session_id"), upstream.lastReq.Header.Get("conversation_id"))
 	require.True(t, gjson.GetBytes(upstream.lastBody, "store").Exists())

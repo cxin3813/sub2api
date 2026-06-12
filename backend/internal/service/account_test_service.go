@@ -224,6 +224,9 @@ func applyOpenAIAccountTestCodexResponsesHeaders(req *http.Request, account *Acc
 	if req.Header.Get("originator") == "" {
 		req.Header.Set("originator", "codex_cli_rs")
 	}
+	if req.Header.Get("Version") == "" {
+		req.Header.Set("Version", codexCLIVersion)
+	}
 	sessionID := fmt.Sprintf("sub2api-test-openai-%d", account.ID)
 	if req.Header.Get("session_id") == "" {
 		req.Header.Set("session_id", sessionID)
