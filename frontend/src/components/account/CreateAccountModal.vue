@@ -2536,6 +2536,21 @@
         </div>
       </div>
 
+      <div
+        v-if="form.platform === 'openai'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <label class="input-label">{{ t('admin.accounts.openai.customUserAgent') }}</label>
+        <input
+          v-model="openAIUserAgent"
+          type="text"
+          class="input font-mono"
+          data-testid="openai-custom-user-agent"
+          :placeholder="t('admin.accounts.openai.customUserAgentPlaceholder')"
+        />
+        <p class="input-hint">{{ t('admin.accounts.openai.customUserAgentHint') }}</p>
+      </div>
+
       <!-- OpenAI WS Mode 三态（off/ctx_pool/passthrough） -->
       <div
         v-if="form.platform === 'openai' && (accountCategory === 'oauth-based' || accountCategory === 'apikey')"
@@ -3414,6 +3429,7 @@ const customErrorCodeInput = ref<number | null>(null)
 const interceptWarmupRequests = ref(false)
 const autoPauseOnExpired = ref(true)
 const openaiPassthroughEnabled = ref(false)
+const openAIUserAgent = ref('')
 const openAICompactMode = ref<OpenAICompactMode>('auto')
 const openAIResponsesMode = ref<OpenAIResponsesMode>('auto')
 const openAIEndpointCapabilities = ref<OpenAIEndpointCapability[]>(['chat_completions', 'embeddings'])
@@ -3531,6 +3547,22 @@ const applyOpenAIEndpointCapabilities = (credentials: Record<string, unknown>) =
     return
   }
   credentials.openai_capabilities = capabilities
+}
+
+const applyOpenAIUserAgentCredential = (
+  credentials: Record<string, unknown>,
+  platform: AccountPlatform = form.platform
+) => {
+  if (platform !== 'openai') {
+    delete credentials.user_agent
+    return
+  }
+  const userAgent = openAIUserAgent.value.trim()
+  if (userAgent) {
+    credentials.user_agent = userAgent
+  } else {
+    delete credentials.user_agent
+  }
 }
 
 function buildAntigravityExtra(): Record<string, unknown> | undefined {
@@ -3841,6 +3873,7 @@ watch(
     }
     if (newPlatform !== 'openai') {
       openaiPassthroughEnabled.value = false
+      openAIUserAgent.value = ''
       openAIEndpointCapabilities.value = ['chat_completions', 'embeddings']
       openaiOAuthResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
       openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
@@ -4241,6 +4274,7 @@ const resetForm = () => {
   interceptWarmupRequests.value = false
   autoPauseOnExpired.value = true
   openaiPassthroughEnabled.value = false
+  openAIUserAgent.value = ''
   openAICompactMode.value = 'auto'
   openAIResponsesMode.value = 'auto'
   openAIEndpointCapabilities.value = ['chat_completions', 'embeddings']
@@ -4637,6 +4671,7 @@ const handleSubmit = async () => {
   }
   if (form.platform === 'openai') {
     applyOpenAIEndpointCapabilities(credentials)
+    applyOpenAIUserAgentCredential(credentials)
     const compactModelMapping = buildOpenAICompactModelMapping()
     if (compactModelMapping) {
       credentials.compact_model_mapping = compactModelMapping
@@ -4759,6 +4794,7 @@ const createAccountAndFinish = async (
     }
   }
   if (platform === 'openai') {
+    applyOpenAIUserAgentCredential(credentials, platform)
     if (type === 'apikey') {
       applyOpenAIEndpointCapabilities(credentials)
     }
@@ -4824,6 +4860,7 @@ const handleOpenAIExchange = async (authCode: string) => {
       }
     }
     if (shouldCreateOpenAI) {
+      applyOpenAIUserAgentCredential(credentials, 'openai')
       const compactModelMapping = buildOpenAICompactModelMapping()
       if (compactModelMapping) {
         credentials.compact_model_mapping = compactModelMapping
@@ -4882,6 +4919,7 @@ const buildOpenAICodexImportCredentialExtras = (): Record<string, unknown> | nul
   if (compactModelMapping) {
     credentials.compact_model_mapping = compactModelMapping
   }
+  applyOpenAIUserAgentCredential(credentials, 'openai')
 
   if (!applyTempUnschedConfig(credentials)) {
     return null
@@ -5029,6 +5067,7 @@ const handleOpenAIBatchRT = async (refreshTokenInput: string, clientId?: string)
           }
         }
         if (shouldCreateOpenAI) {
+          applyOpenAIUserAgentCredential(credentials, 'openai')
           const compactModelMapping = buildOpenAICompactModelMapping()
           if (compactModelMapping) {
             credentials.compact_model_mapping = compactModelMapping

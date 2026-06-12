@@ -338,6 +338,85 @@ func TestAccountTestService_OpenAI401SetsPermanentErrorOnly(t *testing.T) {
 	require.Nil(t, account.RateLimitResetAt)
 }
 
+func TestAccountTestService_OpenAIAPIKeyResponsesUsesAccountUserAgent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+
+	upstreamBody := `data: {"type":"response.output_text.delta","delta":"pong"}
+
+data: {"type":"response.completed"}
+
+`
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+	}}
+	svc := &AccountTestService{
+		httpUpstream: upstream,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+	account := &Account{
+		ID:          95,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":    "sk-test",
+			"base_url":   "https://compat-upstream.example",
+			"user_agent": "custom-openai-client/1.2.3",
+		},
+		Extra: map[string]any{openai_compat.ExtraKeyResponsesSupported: true},
+	}
+
+	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4", "hello", "")
+	require.NoError(t, err)
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, "custom-openai-client/1.2.3", upstream.lastReq.Header.Get("User-Agent"))
+	require.Contains(t, recorder.Body.String(), `"success":true`)
+}
+
+func TestAccountTestService_OpenAIAPIKeyChatCompletionsUsesAccountUserAgent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+
+	upstreamBody := strings.Join([]string{
+		`data: {"id":"chatcmpl_test","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"pong"},"finish_reason":null}]}`,
+		"",
+		`data: {"id":"chatcmpl_test","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+	}}
+	svc := &AccountTestService{
+		httpUpstream: upstream,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+	account := &Account{
+		ID:          96,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":    "sk-test",
+			"base_url":   "https://compat-upstream.example/v1",
+			"user_agent": "custom-openai-client/1.2.3",
+		},
+		Extra: map[string]any{openai_compat.ExtraKeyResponsesSupported: false},
+	}
+
+	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4", "hello", "")
+	require.NoError(t, err)
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, "custom-openai-client/1.2.3", upstream.lastReq.Header.Get("User-Agent"))
+	require.Contains(t, recorder.Body.String(), `"success":true`)
+}
+
 func TestAccountTestService_OpenAIAPIKeyResponsesUnsupportedUsesChatCompletionsPath(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, recorder := newTestContext()
@@ -479,4 +558,33 @@ func TestAccountTestService_OpenAIChatCompletionsPathRejectsNonJSONStream(t *tes
 	require.Contains(t, err.Error(), "Invalid Chat Completions response from /v1/chat/completions")
 	require.Contains(t, recorder.Body.String(), "/v1/chat/completions")
 	require.NotContains(t, recorder.Body.String(), `"success":true`)
+}
+
+func TestAccountTestService_OpenAIAPIKeyImageUsesAccountUserAgent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+
+	upstream := &httpUpstreamRecorder{resp: newJSONResponse(http.StatusOK, `{"data":[{"b64_json":"QUJD","revised_prompt":"image prompt"}]}`)}
+	svc := &AccountTestService{
+		httpUpstream: upstream,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+	account := &Account{
+		ID:          97,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":    "sk-test",
+			"base_url":   "https://compat-upstream.example",
+			"user_agent": "custom-openai-client/1.2.3",
+		},
+	}
+
+	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-image-2", "draw", "")
+	require.NoError(t, err)
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, "custom-openai-client/1.2.3", upstream.lastReq.Header.Get("User-Agent"))
+	require.Contains(t, recorder.Body.String(), `"type":"image"`)
+	require.Contains(t, recorder.Body.String(), `"success":true`)
 }

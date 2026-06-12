@@ -3394,6 +3394,10 @@ export default {
       openai: {
         baseUrlHint: 'Leave default for official OpenAI API',
         apiKeyHint: 'Your OpenAI API Key',
+        customUserAgent: 'Custom User-Agent',
+        customUserAgentPlaceholder: 'Leave empty to pass through the client request User-Agent',
+        customUserAgentHint:
+          'Applies only to this OpenAI account. Upstream forwarding and account tests use this value when set.',
         oauthPassthrough: 'Auto passthrough (auth only)',
         oauthPassthroughDesc:
           'When enabled, this OpenAI account uses automatic passthrough: the gateway forwards request/response as-is and only swaps auth, while keeping billing/concurrency/audit and necessary safety filtering.',

@@ -3542,6 +3542,9 @@ export default {
       openai: {
         baseUrlHint: '留空使用官方 OpenAI API',
         apiKeyHint: '您的 OpenAI API Key',
+        customUserAgent: '自定义 User-Agent',
+        customUserAgentPlaceholder: '留空则透传客户端请求的 User-Agent',
+        customUserAgentHint: '仅对当前 OpenAI 账号生效；填写后转发到上游和测试账号请求都会使用该值。',
         oauthPassthrough: '自动透传（仅替换认证）',
         oauthPassthroughDesc:
           '开启后，该 OpenAI 账号将自动透传请求与响应，仅替换认证并保留计费/并发/审计及必要安全过滤；如遇兼容性问题可随时关闭回滚。',

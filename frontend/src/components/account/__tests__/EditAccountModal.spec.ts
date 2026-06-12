@@ -241,6 +241,45 @@ describe('EditAccountModal', () => {
     })
   })
 
+  it('submits account-level custom User-Agent for OpenAI accounts', async () => {
+    const account = buildAccount()
+    account.credentials.user_agent = 'existing-openai-client/1.0.0'
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    const field = wrapper.get<HTMLInputElement>('[data-testid="openai-custom-user-agent"]')
+
+    expect(field.element.value).toBe('existing-openai-client/1.0.0')
+
+    await field.setValue(' updated-openai-client/2.0.0 ')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.user_agent).toBe(
+      'updated-openai-client/2.0.0'
+    )
+  })
+
+  it('removes account-level custom User-Agent when OpenAI field is blank', async () => {
+    const account = buildAccount()
+    account.credentials.user_agent = 'existing-openai-client/1.0.0'
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+
+    await wrapper.get('[data-testid="openai-custom-user-agent"]').setValue('   ')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).not.toHaveProperty('user_agent')
+  })
+
   it('submits OpenAI compact mode and compact-only model mapping', async () => {
     const account = buildAccount()
     account.extra = {

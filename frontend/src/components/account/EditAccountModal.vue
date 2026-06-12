@@ -1355,6 +1355,21 @@
         </div>
       </div>
 
+      <div
+        v-if="account?.platform === 'openai'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <label class="input-label">{{ t('admin.accounts.openai.customUserAgent') }}</label>
+        <input
+          v-model="openAIUserAgent"
+          type="text"
+          class="input font-mono"
+          data-testid="openai-custom-user-agent"
+          :placeholder="t('admin.accounts.openai.customUserAgentPlaceholder')"
+        />
+        <p class="input-hint">{{ t('admin.accounts.openai.customUserAgentHint') }}</p>
+      </div>
+
       <!-- OpenAI Codex 图片生成桥接账号级覆盖 -->
       <div
         v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'apikey')"
@@ -2578,6 +2593,7 @@ const customBaseUrl = ref('')
 
 // OpenAI 自动透传开关（OAuth/API Key）
 const openaiPassthroughEnabled = ref(false)
+const openAIUserAgent = ref('')
 const openAICompactMode = ref<OpenAICompactMode>('auto')
 const openAIResponsesMode = ref<OpenAIResponsesMode>('auto')
 const openAIEndpointCapabilities = ref<OpenAIEndpointCapability[]>(['chat_completions', 'embeddings'])
@@ -2767,6 +2783,17 @@ const applyOpenAIEndpointCapabilities = (credentials: Record<string, unknown>) =
   }
   credentials.openai_capabilities = capabilities
 }
+const applyOpenAIUserAgentCredential = (credentials: Record<string, unknown>) => {
+  if (props.account?.platform !== 'openai') {
+    return
+  }
+  const userAgent = openAIUserAgent.value.trim()
+  if (userAgent) {
+    credentials.user_agent = userAgent
+  } else {
+    delete credentials.user_agent
+  }
+}
 const normalizeOpenAIResponsesMode = (mode: unknown): OpenAIResponsesMode => {
   if (mode === 'force_responses' || mode === 'force_chat_completions') {
     return mode
@@ -2936,6 +2963,10 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   // Load intercept warmup requests setting (applies to all account types)
   const credentials = newAccount.credentials as Record<string, unknown> | undefined
   interceptWarmupRequests.value = credentials?.intercept_warmup_requests === true
+  openAIUserAgent.value =
+    newAccount.platform === 'openai' && typeof credentials?.user_agent === 'string'
+      ? credentials.user_agent
+      : ''
   autoPauseOnExpired.value = newAccount.auto_pause_on_expired === true
   editVertexProjectId.value = ''
   editVertexClientEmail.value = ''
@@ -3720,6 +3751,7 @@ const handleSubmit = async () => {
       }
       if (props.account.platform === 'openai') {
         applyOpenAIEndpointCapabilities(newCredentials)
+        applyOpenAIUserAgentCredential(newCredentials)
         const compactModelMapping = buildModelMappingObject('mapping', [], openAICompactModelMappings.value)
         if (compactModelMapping) {
           newCredentials.compact_model_mapping = compactModelMapping
@@ -3893,6 +3925,7 @@ const handleSubmit = async () => {
         return
       }
 
+      applyOpenAIUserAgentCredential(newCredentials)
       updatePayload.credentials = newCredentials
     }
 
@@ -3920,6 +3953,7 @@ const handleSubmit = async () => {
       } else {
         delete newCredentials.compact_model_mapping
       }
+      applyOpenAIUserAgentCredential(newCredentials)
 
       updatePayload.credentials = newCredentials
     }
