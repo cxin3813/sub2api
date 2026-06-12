@@ -3,6 +3,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -419,6 +420,47 @@ data: {"type":"response.completed"}
 	require.True(t, gjson.GetBytes(upstream.lastBody, "store").Exists())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "store").Bool())
 	require.Contains(t, recorder.Body.String(), `"success":true`)
+}
+
+func TestLogOpenAIAccountTestInvalidCodexRequestIncludesSanitizedRequestSummary(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	logSink, restore := captureStructuredLog(t)
+	defer restore()
+
+	reqBody := []byte(`{"model":"gpt-5.5","stream":true,"store":false,"instructions":"local-test-instructions","input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]}]}`)
+	req := httptest.NewRequest(http.MethodPost, "https://example.com/v1/responses", bytes.NewReader(reqBody))
+	req.Header.Set("User-Agent", "Codex Desktop/0.140.0-alpha.2 (Mac OS 26.3.1; arm64) unknown (Codex Desktop; 26.609.30741)")
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("OpenAI-Beta", "responses=experimental")
+	req.Header.Set("originator", "codex_cli_rs")
+	req.Header.Set("Version", codexCLIVersion)
+	req.Header.Set("session_id", "session-test")
+	req.Header.Set("conversation_id", "session-test")
+	req.Header.Set("Authorization", "Bearer secret")
+
+	logOpenAIAccountTestInvalidCodexRequest(
+		context.Background(),
+		&Account{ID: 98, Name: "any-cx", Platform: PlatformOpenAI, Type: AccountTypeAPIKey},
+		req,
+		reqBody,
+		http.StatusBadRequest,
+		[]byte(`{"error":{"message":"invalid codex request (request id: rid)","type":"new_api_error","param":"","code":"invalid_responses_request"}}`),
+	)
+
+	require.True(t, logSink.ContainsMessageAtLevel("OpenAI 账号测试上游返回 invalid codex request，已记录脱敏请求摘要用于排查", "warn"))
+	require.True(t, logSink.ContainsFieldValue("account_name", "any-cx"))
+	require.True(t, logSink.ContainsFieldValue("request_user_agent", "Codex Desktop/0.140.0-alpha.2"))
+	require.True(t, logSink.ContainsFieldValue("request_openai_beta", "responses=experimental"))
+	require.True(t, logSink.ContainsFieldValue("request_originator", "codex_cli_rs"))
+	require.True(t, logSink.ContainsFieldValue("request_version", codexCLIVersion))
+	require.True(t, logSink.ContainsFieldValue("request_model", "gpt-5.5"))
+	require.True(t, logSink.ContainsFieldValue("request_has_store", "true"))
+	require.True(t, logSink.ContainsFieldValue("request_store", "false"))
+	require.True(t, logSink.ContainsFieldValue("request_has_instructions", "true"))
+	require.True(t, logSink.ContainsField("request_body_sha256"))
+	require.False(t, logSink.ContainsField("request_body_preview"))
+	require.False(t, logSink.ContainsFieldValue("authorization", "secret"))
 }
 
 func TestAccountTestService_OpenAIAPIKeyChatCompletionsUsesAccountUserAgent(t *testing.T) {

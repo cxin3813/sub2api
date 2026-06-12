@@ -20,11 +20,13 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 // sseDataPrefix matches SSE data lines with optional whitespace after colon.
@@ -234,6 +236,116 @@ func applyOpenAIAccountTestCodexResponsesHeaders(req *http.Request, account *Acc
 	if req.Header.Get("conversation_id") == "" {
 		req.Header.Set("conversation_id", sessionID)
 	}
+}
+
+func logOpenAIAccountTestInvalidCodexRequest(
+	ctx context.Context,
+	account *Account,
+	req *http.Request,
+	requestBody []byte,
+	statusCode int,
+	responseBody []byte,
+) {
+	if statusCode != http.StatusBadRequest {
+		return
+	}
+	errMsg := ""
+	errCode := ""
+	errType := ""
+	var parsed map[string]any
+	if err := json.Unmarshal(responseBody, &parsed); err == nil {
+		if errObj, ok := parsed["error"].(map[string]any); ok {
+			if v, ok := errObj["message"].(string); ok {
+				errMsg = strings.TrimSpace(v)
+			}
+			if v, ok := errObj["code"].(string); ok {
+				errCode = strings.TrimSpace(v)
+			}
+			if v, ok := errObj["type"].(string); ok {
+				errType = strings.TrimSpace(v)
+			}
+		}
+	}
+	if !strings.Contains(strings.ToLower(errMsg), "invalid codex request") && strings.ToLower(errCode) != "invalid_responses_request" {
+		return
+	}
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	accountID := int64(0)
+	accountName := ""
+	accountType := ""
+	accountPlatform := ""
+	if account != nil {
+		accountID = account.ID
+		accountName = strings.TrimSpace(account.Name)
+		accountType = string(account.Type)
+		accountPlatform = string(account.Platform)
+	}
+
+	fields := []zap.Field{
+		zap.String("component", "service.account_test"),
+		zap.Int64("account_id", accountID),
+		zap.String("account_name", accountName),
+		zap.String("account_type", accountType),
+		zap.String("account_platform", accountPlatform),
+		zap.Int("upstream_status_code", statusCode),
+		zap.String("upstream_error_message", errMsg),
+		zap.String("upstream_error_code", errCode),
+		zap.String("upstream_error_type", errType),
+		zap.Int("request_body_size", len(requestBody)),
+		zap.String("request_body_sha256", sha256Hex(requestBody)),
+	}
+
+	if req != nil {
+		fields = append(fields,
+			zap.String("upstream_scheme", strings.TrimSpace(req.URL.Scheme)),
+			zap.String("upstream_host", strings.TrimSpace(req.URL.Host)),
+			zap.String("upstream_path", strings.TrimSpace(req.URL.Path)),
+			zap.String("request_user_agent", strings.TrimSpace(req.Header.Get("User-Agent"))),
+			zap.String("request_accept", strings.TrimSpace(req.Header.Get("Accept"))),
+			zap.String("request_content_type", strings.TrimSpace(req.Header.Get("Content-Type"))),
+			zap.String("request_openai_beta", strings.TrimSpace(req.Header.Get("OpenAI-Beta"))),
+			zap.String("request_originator", strings.TrimSpace(req.Header.Get("originator"))),
+			zap.String("request_version", strings.TrimSpace(req.Header.Get("Version"))),
+			zap.Bool("request_has_session_id", strings.TrimSpace(req.Header.Get("session_id")) != ""),
+			zap.Bool("request_has_conversation_id", strings.TrimSpace(req.Header.Get("conversation_id")) != ""),
+			zap.Bool("codex_official_client_match", openai.IsCodexOfficialClientByHeaders(req.Header.Get("User-Agent"), req.Header.Get("originator"))),
+		)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(requestBody, &body); err == nil {
+		if model, ok := body["model"].(string); ok {
+			fields = append(fields, zap.String("request_model", strings.TrimSpace(model)))
+		}
+		if stream, ok := body["stream"].(bool); ok {
+			fields = append(fields, zap.Bool("request_stream", stream))
+		}
+		if store, ok := body["store"].(bool); ok {
+			fields = append(fields, zap.Bool("request_store", store))
+		}
+		_, hasStore := body["store"]
+		_, hasInstructions := body["instructions"]
+		fields = append(fields,
+			zap.Bool("request_has_store", hasStore),
+			zap.Bool("request_has_instructions", hasInstructions),
+		)
+		if input, ok := body["input"].([]any); ok {
+			fields = append(fields, zap.Int("request_input_count", len(input)))
+			if len(input) > 0 {
+				if first, ok := input[0].(map[string]any); ok {
+					if role, ok := first["role"].(string); ok {
+						fields = append(fields, zap.String("request_first_input_role", strings.TrimSpace(role)))
+					}
+				}
+			}
+		}
+	}
+
+	logger.FromContext(ctx).With(fields...).Warn("OpenAI 账号测试上游返回 invalid codex request，已记录脱敏请求摘要用于排查")
 }
 
 // testClaudeAccountConnection tests an Anthropic Claude account's connection
@@ -667,6 +779,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			errMsg := fmt.Sprintf("Authentication failed (401): %s", string(body))
 			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
 		}
+		logOpenAIAccountTestInvalidCodexRequest(ctx, account, req, payloadBytes, resp.StatusCode, body)
 		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
 	}
 
