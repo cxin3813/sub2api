@@ -190,6 +190,14 @@ type SystemSettings struct {
 	OpenAICodexUserAgent                   string `json:"openai_codex_user_agent"`
 	OpenAIAllowClaudeCodeCodexPlugin       bool   `json:"openai_allow_claude_code_codex_plugin"`
 
+	// codex_cli_only 加固
+	MinCodexVersion                      string `json:"min_codex_version"`
+	MaxCodexVersion                      string `json:"max_codex_version"`
+	CodexCLIOnlyBlacklist                string `json:"codex_cli_only_blacklist"`
+	CodexCLIOnlyWhitelist                string `json:"codex_cli_only_whitelist"`
+	CodexCLIOnlyAllowAppServerClients    bool   `json:"codex_cli_only_allow_app_server_clients"`
+	CodexCLIOnlyEngineFingerprintSignals string `json:"codex_cli_only_engine_fingerprint_signals"`
+
 	// Gateway body logging
 	GatewayBodyLogEnabled         bool `json:"gateway_body_log_enabled"`
 	GatewayBodyLogMaxBytes        int  `json:"gateway_body_log_max_bytes"`

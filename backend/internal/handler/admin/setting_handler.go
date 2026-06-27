@@ -266,6 +266,12 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		GatewayBodyLogMaxBytes:                 settings.GatewayBodyLogMaxBytes,
 		GatewayBodyLogCaptureRequest:           settings.GatewayBodyLogCaptureRequest,
 		GatewayBodyLogCaptureResponse:          settings.GatewayBodyLogCaptureResponse,
+		MinCodexVersion:                        settings.MinCodexVersion,
+		MaxCodexVersion:                        settings.MaxCodexVersion,
+		CodexCLIOnlyBlacklist:                  settings.CodexCLIOnlyBlacklist,
+		CodexCLIOnlyWhitelist:                  settings.CodexCLIOnlyWhitelist,
+		CodexCLIOnlyAllowAppServerClients:      settings.CodexCLIOnlyAllowAppServerClients,
+		CodexCLIOnlyEngineFingerprintSignals:   settings.CodexCLIOnlyEngineFingerprintSignals,
 		WebSearchEmulationEnabled:              settings.WebSearchEmulationEnabled,
 		PaymentVisibleMethodAlipaySource:       settings.PaymentVisibleMethodAlipaySource,
 		PaymentVisibleMethodWxpaySource:        settings.PaymentVisibleMethodWxpaySource,
@@ -604,6 +610,14 @@ type UpdateSettingsRequest struct {
 	GatewayBodyLogMaxBytes                 *int    `json:"gateway_body_log_max_bytes"`
 	GatewayBodyLogCaptureRequest           *bool   `json:"gateway_body_log_capture_request"`
 	GatewayBodyLogCaptureResponse          *bool   `json:"gateway_body_log_capture_response"`
+
+	// codex_cli_only 加固（global-only）
+	MinCodexVersion                      string `json:"min_codex_version"`
+	MaxCodexVersion                      string `json:"max_codex_version"`
+	CodexCLIOnlyBlacklist                string `json:"codex_cli_only_blacklist"`
+	CodexCLIOnlyWhitelist                string `json:"codex_cli_only_whitelist"`
+	CodexCLIOnlyAllowAppServerClients    *bool  `json:"codex_cli_only_allow_app_server_clients"`
+	CodexCLIOnlyEngineFingerprintSignals string `json:"codex_cli_only_engine_fingerprint_signals"`
 
 	// Payment visible method routing
 	PaymentVisibleMethodAlipaySource  *string `json:"payment_visible_method_alipay_source"`
@@ -1474,6 +1488,34 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		}
 	}
 
+	// codex_cli_only 加固：最低/最高 Codex 版本（空=禁用，或合法 semver；max>=min）
+	if req.MinCodexVersion != "" && !semverPattern.MatchString(req.MinCodexVersion) {
+		response.Error(c, http.StatusBadRequest, "min_codex_version must be empty or a valid semver (e.g. 0.141.0)")
+		return
+	}
+	if req.MaxCodexVersion != "" && !semverPattern.MatchString(req.MaxCodexVersion) {
+		response.Error(c, http.StatusBadRequest, "max_codex_version must be empty or a valid semver (e.g. 0.200.0)")
+		return
+	}
+	if req.MinCodexVersion != "" && req.MaxCodexVersion != "" && service.CompareVersions(req.MaxCodexVersion, req.MinCodexVersion) < 0 {
+		response.Error(c, http.StatusBadRequest, "max_codex_version must be greater than or equal to min_codex_version")
+		return
+	}
+	// codex_cli_only 黑/白名单：非空须为合法 []AllowedClientEntry JSON。
+	// 黑名单 OR 宽 deny（允许 originator-only）；白名单双因子 AND，额外要求每条可命中（非空 originator + ua_contains）。
+	if err := service.ValidateCodexClientEntriesJSON(req.CodexCLIOnlyBlacklist); err != nil {
+		response.Error(c, http.StatusBadRequest, "codex_cli_only_blacklist "+err.Error())
+		return
+	}
+	if err := service.ValidateCodexWhitelistEntriesJSON(req.CodexCLIOnlyWhitelist); err != nil {
+		response.Error(c, http.StatusBadRequest, "codex_cli_only_whitelist "+err.Error())
+		return
+	}
+	if err := service.ValidateEngineFingerprintSignalsJSON(req.CodexCLIOnlyEngineFingerprintSignals); err != nil {
+		response.Error(c, http.StatusBadRequest, "codex_cli_only_engine_fingerprint_signals "+err.Error())
+		return
+	}
+
 	// 交叉验证：如果同时设置了最低和最高版本号，最高版本号必须 >= 最低版本号
 	if req.MinClaudeCodeVersion != "" && req.MaxClaudeCodeVersion != "" {
 		if service.CompareVersions(req.MaxClaudeCodeVersion, req.MinClaudeCodeVersion) < 0 {
@@ -1717,6 +1759,17 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.OpenAIAllowClaudeCodeCodexPlugin
 		}(),
+		MinCodexVersion:       strings.TrimSpace(req.MinCodexVersion),
+		MaxCodexVersion:       strings.TrimSpace(req.MaxCodexVersion),
+		CodexCLIOnlyBlacklist: strings.TrimSpace(req.CodexCLIOnlyBlacklist),
+		CodexCLIOnlyWhitelist: strings.TrimSpace(req.CodexCLIOnlyWhitelist),
+		CodexCLIOnlyAllowAppServerClients: func() bool {
+			if req.CodexCLIOnlyAllowAppServerClients != nil {
+				return *req.CodexCLIOnlyAllowAppServerClients
+			}
+			return previousSettings.CodexCLIOnlyAllowAppServerClients
+		}(),
+		CodexCLIOnlyEngineFingerprintSignals: strings.TrimSpace(req.CodexCLIOnlyEngineFingerprintSignals),
 		GatewayBodyLogEnabled: func() bool {
 			if req.GatewayBodyLogEnabled != nil {
 				return *req.GatewayBodyLogEnabled
@@ -2137,6 +2190,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		GatewayBodyLogMaxBytes:                 updatedSettings.GatewayBodyLogMaxBytes,
 		GatewayBodyLogCaptureRequest:           updatedSettings.GatewayBodyLogCaptureRequest,
 		GatewayBodyLogCaptureResponse:          updatedSettings.GatewayBodyLogCaptureResponse,
+		MinCodexVersion:                        updatedSettings.MinCodexVersion,
+		MaxCodexVersion:                        updatedSettings.MaxCodexVersion,
+		CodexCLIOnlyBlacklist:                  updatedSettings.CodexCLIOnlyBlacklist,
+		CodexCLIOnlyWhitelist:                  updatedSettings.CodexCLIOnlyWhitelist,
+		CodexCLIOnlyAllowAppServerClients:      updatedSettings.CodexCLIOnlyAllowAppServerClients,
+		CodexCLIOnlyEngineFingerprintSignals:   updatedSettings.CodexCLIOnlyEngineFingerprintSignals,
 		PaymentVisibleMethodAlipaySource:       updatedSettings.PaymentVisibleMethodAlipaySource,
 		PaymentVisibleMethodWxpaySource:        updatedSettings.PaymentVisibleMethodWxpaySource,
 		PaymentVisibleMethodAlipayEnabled:      updatedSettings.PaymentVisibleMethodAlipayEnabled,
@@ -2563,6 +2622,24 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	}
 	if before.MaxClaudeCodeVersion != after.MaxClaudeCodeVersion {
 		changed = append(changed, "max_claude_code_version")
+	}
+	if before.MinCodexVersion != after.MinCodexVersion {
+		changed = append(changed, "min_codex_version")
+	}
+	if before.MaxCodexVersion != after.MaxCodexVersion {
+		changed = append(changed, "max_codex_version")
+	}
+	if before.CodexCLIOnlyAllowAppServerClients != after.CodexCLIOnlyAllowAppServerClients {
+		changed = append(changed, "codex_cli_only_allow_app_server_clients")
+	}
+	if before.CodexCLIOnlyEngineFingerprintSignals != after.CodexCLIOnlyEngineFingerprintSignals {
+		changed = append(changed, "codex_cli_only_engine_fingerprint_signals")
+	}
+	if before.CodexCLIOnlyBlacklist != after.CodexCLIOnlyBlacklist {
+		changed = append(changed, "codex_cli_only_blacklist")
+	}
+	if before.CodexCLIOnlyWhitelist != after.CodexCLIOnlyWhitelist {
+		changed = append(changed, "codex_cli_only_whitelist")
 	}
 	if before.AllowUngroupedKeyScheduling != after.AllowUngroupedKeyScheduling {
 		changed = append(changed, "allow_ungrouped_key_scheduling")
