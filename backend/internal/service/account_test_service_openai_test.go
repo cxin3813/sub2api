@@ -142,7 +142,7 @@ func TestAccountTestService_OpenAIStreamEOFBeforeCompletedFails(t *testing.T) {
 	ctx, recorder := newTestContext()
 
 	resp := newJSONResponse(http.StatusOK, "")
-	resp.Body = io.NopCloser(strings.NewReader(`data: {"type":"response.output_text.delta","delta":"hi"}
+	resp.Body = io.NopCloser(strings.NewReader(`data: {"type":"response.created","response":{"id":"resp_test","status":"in_progress"}}
 
 `))
 
@@ -419,6 +419,170 @@ data: {"type":"response.completed"}
 	require.Empty(t, upstream.lastReq.Header.Get("conversation_id"))
 	require.False(t, gjson.GetBytes(upstream.lastBody, "store").Exists())
 	require.Contains(t, recorder.Body.String(), `"success":true`)
+}
+
+func TestAccountTestService_OpenAIAPIKeyResponsesAcceptsCompatChatSSE(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+
+	upstreamBody := strings.Join([]string{
+		`data: {"id":"chatcmpl_dashscope","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"pong"},"finish_reason":null}]}`,
+		"",
+		`data: {"id":"chatcmpl_dashscope","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+	}}
+	svc := &AccountTestService{
+		httpUpstream: upstream,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+	account := &Account{
+		ID:          99,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+		},
+		Extra: map[string]any{openai_compat.ExtraKeyResponsesSupported: true},
+	}
+
+	err := svc.testOpenAIAccountConnection(ctx, account, "glm-5.2", "hi", "")
+	require.NoError(t, err)
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, "https://dashscope.aliyuncs.com/compatible-mode/v1/responses", upstream.lastReq.URL.String())
+	body := recorder.Body.String()
+	require.Contains(t, body, "pong")
+	require.Contains(t, body, "已通过 OpenAI 兼容流式响应验证")
+	require.Contains(t, body, `"success":true`)
+	require.NotContains(t, body, "Stream ended before response.completed")
+}
+
+func TestAccountTestService_OpenAIAPIKeyResponsesAcceptsTextDeltaEOF(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(`data: {"type":"response.output_text.delta","delta":"pong"}`)),
+	}}
+	svc := &AccountTestService{
+		httpUpstream: upstream,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+	account := &Account{
+		ID:          100,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+		},
+		Extra: map[string]any{openai_compat.ExtraKeyResponsesSupported: true},
+	}
+
+	err := svc.testOpenAIAccountConnection(ctx, account, "glm-5.2", "hi", "")
+	require.NoError(t, err)
+	body := recorder.Body.String()
+	require.Contains(t, body, "pong")
+	require.Contains(t, body, `"success":true`)
+	require.NotContains(t, body, "Stream ended before response.completed")
+}
+
+func TestAccountTestService_OpenAIAPIKeyResponsesAcceptsCompletedJSON(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"id":"resp_dashscope","status":"completed","output_text":"pong"}`)),
+	}}
+	svc := &AccountTestService{
+		httpUpstream: upstream,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+	account := &Account{
+		ID:          101,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+		},
+		Extra: map[string]any{openai_compat.ExtraKeyResponsesSupported: true},
+	}
+
+	err := svc.testOpenAIAccountConnection(ctx, account, "glm-5.2", "hi", "")
+	require.NoError(t, err)
+	body := recorder.Body.String()
+	require.Contains(t, body, `"success":true`)
+	require.NotContains(t, body, "Stream ended before response.completed")
+}
+
+func TestAccountTestService_OpenAIAPIKeyResponsesIncompleteFallsBackToChatCompletions(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+
+	chatBody := strings.Join([]string{
+		`data: {"id":"chatcmpl_dashscope","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"pong"},"finish_reason":null}]}`,
+		"",
+		`data: {"id":"chatcmpl_dashscope","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{
+		{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader("")),
+		},
+		{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader(chatBody)),
+		},
+	}}
+	repo := &openAIAccountTestRepo{}
+	svc := &AccountTestService{
+		accountRepo:  repo,
+		httpUpstream: upstream,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+	account := &Account{
+		ID:          102,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+		},
+		Extra: map[string]any{openai_compat.ExtraKeyResponsesSupported: true},
+	}
+
+	err := svc.testOpenAIAccountConnection(ctx, account, "glm-5.2", "hi", "")
+	require.NoError(t, err)
+	require.Len(t, upstream.requests, 2)
+	require.Equal(t, "https://dashscope.aliyuncs.com/compatible-mode/v1/responses", upstream.requests[0].URL.String())
+	require.Equal(t, "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", upstream.requests[1].URL.String())
+	require.Equal(t, false, repo.updatedExtra[openai_compat.ExtraKeyResponsesSupported])
+	body := recorder.Body.String()
+	require.Contains(t, body, "Responses API 流式响应不完整")
+	require.Contains(t, body, "pong")
+	require.Contains(t, body, `"success":true`)
+	require.NotContains(t, body, "Stream ended before response.completed")
 }
 
 func TestAccountTestService_OpenAIAPIKeyChatCompletionsUsesAccountUserAgent(t *testing.T) {

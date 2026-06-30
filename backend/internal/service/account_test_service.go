@@ -36,6 +36,8 @@ const (
 	chatgptCodexAPIURL = "https://chatgpt.com/backend-api/codex/responses"
 )
 
+var errOpenAIResponsesTestIncomplete = errors.New("Stream ended before response.completed")
+
 // TestEvent represents a SSE event for account testing
 type TestEvent struct {
 	Type     string `json:"type"`
@@ -539,6 +541,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	var authToken string
 	var apiURL string
 	var isOAuth bool
+	var normalizedBaseURL string
 
 	if account.IsOAuth() {
 		isOAuth = true
@@ -561,7 +564,8 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		if baseURL == "" {
 			baseURL = "https://api.openai.com"
 		}
-		normalizedBaseURL, err := s.validateUpstreamBaseURL(baseURL)
+		var err error
+		normalizedBaseURL, err = s.validateUpstreamBaseURL(baseURL)
 		if err != nil {
 			return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
 		}
@@ -638,7 +642,39 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	}
 
 	// Process SSE stream
-	return s.processOpenAIStream(c, resp.Body)
+	if err := s.processOpenAIStream(c, resp.Body); err != nil {
+		if errors.Is(err, errOpenAIResponsesTestIncomplete) {
+			if account.Type == AccountTypeAPIKey && shouldFallbackOpenAIAccountTestToChatCompletions(account) {
+				s.sendEvent(c, TestEvent{Type: "status", Text: "Responses API 流式响应不完整，改用 /v1/chat/completions 测试"})
+				s.markOpenAIResponsesUnsupportedAfterTestFallback(ctx, account)
+				return s.testOpenAIChatCompletionsConnection(c, account, testModelID, prompt, normalizedBaseURL, authToken)
+			}
+			return s.sendErrorAndEnd(c, errOpenAIResponsesTestIncomplete.Error())
+		}
+		return err
+	}
+	return nil
+}
+
+func shouldFallbackOpenAIAccountTestToChatCompletions(account *Account) bool {
+	if account == nil || account.Type != AccountTypeAPIKey {
+		return false
+	}
+	if mode, ok := account.Extra[openai_compat.ExtraKeyResponsesMode].(string); ok &&
+		openai_compat.NormalizeResponsesSupportMode(mode) == openai_compat.ResponsesSupportModeForceResponses {
+		return false
+	}
+	return true
+}
+
+func (s *AccountTestService) markOpenAIResponsesUnsupportedAfterTestFallback(ctx context.Context, account *Account) {
+	if s.accountRepo == nil || account == nil {
+		return
+	}
+	updates := map[string]any{openai_compat.ExtraKeyResponsesSupported: false}
+	if err := s.accountRepo.UpdateExtra(ctx, account.ID, updates); err == nil {
+		mergeAccountExtra(account, updates)
+	}
 }
 
 // testOpenAIChatCompletionsConnection tests an OpenAI-compatible APIKey account
@@ -1410,34 +1446,34 @@ func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, 
 
 // processOpenAIStream processes the SSE stream from OpenAI Responses API
 func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader) error {
-	reader := bufio.NewReader(body)
 	seenCompleted := false
+	seenResponseContent := false
+	seenCompatChatChunk := false
+	seenCompatChatFinish := false
 
-	for {
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			if err == io.EOF {
-				if seenCompleted {
-					s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
-					return nil
-				}
-				return s.sendErrorAndEnd(c, "Stream ended before response.completed")
-			}
-			return s.sendErrorAndEnd(c, fmt.Sprintf("Stream read error: %s", err.Error()))
-		}
-
+	scanner := bufio.NewScanner(body)
+	for scanner.Scan() {
+		line := scanner.Text()
 		line = strings.TrimSpace(line)
-		if line == "" || !sseDataPrefix.MatchString(line) {
+		if line == "" {
 			continue
 		}
 
-		jsonStr := sseDataPrefix.ReplaceAllString(line, "")
+		jsonStr := line
+		if sseDataPrefix.MatchString(line) {
+			jsonStr = sseDataPrefix.ReplaceAllString(line, "")
+		} else if !strings.HasPrefix(line, "{") {
+			continue
+		}
 		if jsonStr == "[DONE]" {
-			if seenCompleted {
+			if seenCompleted || seenResponseContent || seenCompatChatChunk || seenCompatChatFinish {
+				if !seenCompleted {
+					s.sendEvent(c, TestEvent{Type: "status", Text: "已通过 OpenAI 兼容流式响应验证"})
+				}
 				s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 				return nil
 			}
-			return s.sendErrorAndEnd(c, "Stream ended before response.completed")
+			return errOpenAIResponsesTestIncomplete
 		}
 
 		var data map[string]any
@@ -1448,10 +1484,15 @@ func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader)
 		eventType, _ := data["type"].(string)
 
 		switch eventType {
-		case "response.output_text.delta":
+		case "response.output_text.delta", "response.output_text.done":
 			// OpenAI Responses API uses "delta" field for text content
 			if delta, ok := data["delta"].(string); ok && delta != "" {
+				seenResponseContent = true
 				s.sendEvent(c, TestEvent{Type: "content", Text: delta})
+			}
+			if text, ok := data["text"].(string); ok && text != "" {
+				seenResponseContent = true
+				s.sendEvent(c, TestEvent{Type: "content", Text: text})
 			}
 		case "response.completed", "response.done":
 			s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
@@ -1475,7 +1516,54 @@ func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader)
 			}
 			return s.sendErrorAndEnd(c, errorMsg)
 		}
+
+		if status, ok := data["status"].(string); ok && strings.EqualFold(status, "completed") {
+			seenCompleted = true
+		}
+		if responseData, ok := data["response"].(map[string]any); ok {
+			if status, ok := responseData["status"].(string); ok && strings.EqualFold(status, "completed") {
+				seenCompleted = true
+			}
+		}
+
+		if choices, ok := data["choices"].([]any); ok {
+			for _, choiceValue := range choices {
+				choice, ok := choiceValue.(map[string]any)
+				if !ok {
+					continue
+				}
+				if delta, ok := choice["delta"].(map[string]any); ok {
+					if text, ok := delta["content"].(string); ok && text != "" {
+						seenCompatChatChunk = true
+						s.sendEvent(c, TestEvent{Type: "content", Text: text})
+					}
+				}
+				if message, ok := choice["message"].(map[string]any); ok {
+					if text, ok := message["content"].(string); ok && text != "" {
+						seenCompatChatChunk = true
+						s.sendEvent(c, TestEvent{Type: "content", Text: text})
+					}
+				}
+				if finishReason, ok := choice["finish_reason"].(string); ok && finishReason != "" {
+					seenCompatChatFinish = true
+				}
+			}
+		}
 	}
+
+	if err := scanner.Err(); err != nil {
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Stream read error: %s", err.Error()))
+	}
+	if seenCompleted {
+		s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+		return nil
+	}
+	if seenResponseContent || seenCompatChatChunk || seenCompatChatFinish {
+		s.sendEvent(c, TestEvent{Type: "status", Text: "已通过 OpenAI 兼容流式响应验证"})
+		s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+		return nil
+	}
+	return errOpenAIResponsesTestIncomplete
 }
 
 // testOpenAIImageAPIKey tests OpenAI image generation using an API Key account.
