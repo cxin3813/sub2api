@@ -345,6 +345,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 		requestPath := c.Request.URL.Path
 		requestContentType := c.GetHeader("Content-Type")
 		requestHeaderJSON := service.MarshalGatewayBodyLogHeaders(c.Request.Header)
+		quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 
 		upstreamModel := ""
 		if result != nil {
@@ -368,6 +369,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 				IPAddress:          clientIP,
 				RequestPayloadHash: requestPayloadHash,
 				APIKeyService:      h.apiKeyService,
+				QuotaPlatform:      quotaPlatform,
 				ChannelUsageFields: channelMapping.ToUsageFields(requestModel, upstreamModel),
 			}); err != nil {
 				logger.L().With(
