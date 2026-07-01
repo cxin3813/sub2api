@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -1020,6 +1021,26 @@ func TestOpenAIResponsesWebSocket_PassthroughUsageLogLeavesUserAgentNilWhenMissi
 	require.Equal(t, "medium", *got.log.ReasoningEffort)
 }
 
+func TestOpenAIResponsesWebSocket_PassthroughBodyLogUsesCurrentTurnPayload(t *testing.T) {
+	firstPayload := `{"type":"response.create","model":"gpt-5.4","input":"first turn","stream":false}`
+	secondPayload := `{"type":"response.create","model":"gpt-5.4","input":"second turn","stream":false}`
+
+	got := runOpenAIResponsesWebSocketUsageLogCase(t, openAIResponsesWSUsageLogCase{
+		firstPayload:    firstPayload,
+		secondPayload:   secondPayload,
+		captureBodyLogs: true,
+	})
+
+	require.Len(t, got.logs, 2)
+	require.Len(t, got.bodyLogs, 2)
+	gotBodies := make(map[string]bool, len(got.bodyLogs))
+	for _, bodyLog := range got.bodyLogs {
+		gotBodies[string(bodyLog.RequestBody)] = true
+	}
+	require.True(t, gotBodies[firstPayload], "第一轮 body-log 应记录首轮请求体")
+	require.True(t, gotBodies[secondPayload], "第二轮 body-log 应记录当前轮请求体，不能复用首包")
+}
+
 func TestSetOpenAIClientTransportHTTP(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -1167,14 +1188,19 @@ func newOpenAIWSHandlerTestServer(t *testing.T, h *OpenAIGatewayHandler, subject
 }
 
 type openAIResponsesWSUsageLogCase struct {
-	firstPayload   string
-	userAgent      *string
-	channelMapping map[string]string
+	firstPayload    string
+	secondPayload   string
+	userAgent       *string
+	channelMapping  map[string]string
+	captureBodyLogs bool
 }
 
 type openAIResponsesWSUsageLogResult struct {
 	log                  *service.UsageLog
+	logs                 []*service.UsageLog
 	upstreamFirstPayload []byte
+	upstreamPayloads     [][]byte
+	bodyLogs             []*service.GatewayBodyLog
 }
 
 type openAIWSUsageHandlerAccountRepoStub struct {
@@ -1249,14 +1275,119 @@ func (s *openAIWSFailoverHandlerAccountRepoStub) SetRateLimited(ctx context.Cont
 
 type openAIWSUsageHandlerUsageLogRepoStub struct {
 	service.UsageLogRepository
+	mu      sync.Mutex
 	created chan *service.UsageLog
+	nextID  int64
 }
 
 func (s *openAIWSUsageHandlerUsageLogRepoStub) Create(ctx context.Context, log *service.UsageLog) (bool, error) {
+	s.mu.Lock()
+	if log != nil && log.ID == 0 {
+		s.nextID++
+		log.ID = s.nextID
+	}
+	s.mu.Unlock()
 	if s.created != nil {
 		s.created <- log
 	}
 	return true, nil
+}
+
+type openAIWSUsageHandlerGatewayBodyLogRepoStub struct {
+	service.GatewayBodyLogRepository
+
+	mu   sync.Mutex
+	logs []*service.GatewayBodyLog
+}
+
+func (s *openAIWSUsageHandlerGatewayBodyLogRepoStub) Upsert(ctx context.Context, log *service.GatewayBodyLog) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cp := *log
+	cp.RequestBody = append([]byte(nil), log.RequestBody...)
+	cp.ResponseBody = append([]byte(nil), log.ResponseBody...)
+	s.logs = append(s.logs, &cp)
+	return nil
+}
+
+func (s *openAIWSUsageHandlerGatewayBodyLogRepoStub) GetByUsageLogID(ctx context.Context, usageLogID int64) (*service.GatewayBodyLog, error) {
+	return nil, service.ErrGatewayBodyLogNotFound
+}
+
+func (s *openAIWSUsageHandlerGatewayBodyLogRepoStub) DeleteBefore(ctx context.Context, before any) (int64, error) {
+	return 0, nil
+}
+
+func (s *openAIWSUsageHandlerGatewayBodyLogRepoStub) snapshot() []*service.GatewayBodyLog {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]*service.GatewayBodyLog, 0, len(s.logs))
+	for _, log := range s.logs {
+		cp := *log
+		cp.RequestBody = append([]byte(nil), log.RequestBody...)
+		cp.ResponseBody = append([]byte(nil), log.ResponseBody...)
+		out = append(out, &cp)
+	}
+	return out
+}
+
+type openAIWSUsageHandlerSettingRepoStub struct {
+	values map[string]string
+}
+
+func (s *openAIWSUsageHandlerSettingRepoStub) Get(ctx context.Context, key string) (*service.Setting, error) {
+	if value, ok := s.values[key]; ok {
+		return &service.Setting{Key: key, Value: value}, nil
+	}
+	return nil, service.ErrSettingNotFound
+}
+
+func (s *openAIWSUsageHandlerSettingRepoStub) GetValue(ctx context.Context, key string) (string, error) {
+	if value, ok := s.values[key]; ok {
+		return value, nil
+	}
+	return "", service.ErrSettingNotFound
+}
+
+func (s *openAIWSUsageHandlerSettingRepoStub) Set(ctx context.Context, key, value string) error {
+	if s.values == nil {
+		s.values = map[string]string{}
+	}
+	s.values[key] = value
+	return nil
+}
+
+func (s *openAIWSUsageHandlerSettingRepoStub) GetMultiple(ctx context.Context, keys []string) (map[string]string, error) {
+	out := make(map[string]string, len(keys))
+	for _, key := range keys {
+		if value, ok := s.values[key]; ok {
+			out[key] = value
+		}
+	}
+	return out, nil
+}
+
+func (s *openAIWSUsageHandlerSettingRepoStub) SetMultiple(ctx context.Context, settings map[string]string) error {
+	if s.values == nil {
+		s.values = make(map[string]string, len(settings))
+	}
+	for key, value := range settings {
+		s.values[key] = value
+	}
+	return nil
+}
+
+func (s *openAIWSUsageHandlerSettingRepoStub) GetAll(ctx context.Context) (map[string]string, error) {
+	out := make(map[string]string, len(s.values))
+	for key, value := range s.values {
+		out[key] = value
+	}
+	return out, nil
+}
+
+func (s *openAIWSUsageHandlerSettingRepoStub) Delete(ctx context.Context, key string) error {
+	delete(s.values, key)
+	return nil
 }
 
 type openAIWSUsageHandlerChannelRepoStub struct {
@@ -1479,7 +1610,12 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
-	upstreamPayloadCh := make(chan []byte, 1)
+	turnCount := 1
+	if strings.TrimSpace(tc.secondPayload) != "" {
+		turnCount = 2
+	}
+
+	upstreamPayloadCh := make(chan []byte, turnCount)
 	upstreamErrCh := make(chan error, 1)
 	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := coderws.Accept(w, r, &coderws.AcceptOptions{
@@ -1493,27 +1629,32 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 			_ = conn.CloseNow()
 		}()
 
-		readCtx, cancelRead := context.WithTimeout(r.Context(), 3*time.Second)
-		msgType, payload, readErr := conn.Read(readCtx)
-		cancelRead()
-		if readErr != nil {
-			upstreamErrCh <- readErr
-			return
-		}
-		if msgType != coderws.MessageText && msgType != coderws.MessageBinary {
-			upstreamErrCh <- errors.New("unexpected upstream websocket message type")
-			return
-		}
-		upstreamPayloadCh <- payload
+		for turn := 1; turn <= turnCount; turn++ {
+			readCtx, cancelRead := context.WithTimeout(r.Context(), 3*time.Second)
+			msgType, payload, readErr := conn.Read(readCtx)
+			cancelRead()
+			if readErr != nil {
+				upstreamErrCh <- readErr
+				return
+			}
+			if msgType != coderws.MessageText && msgType != coderws.MessageBinary {
+				upstreamErrCh <- errors.New("unexpected upstream websocket message type")
+				return
+			}
+			upstreamPayloadCh <- payload
 
-		writeCtx, cancelWrite := context.WithTimeout(r.Context(), 3*time.Second)
-		writeErr := conn.Write(writeCtx, coderws.MessageText, []byte(
-			`{"type":"response.completed","response":{"id":"resp_usage_e2e","model":"gpt-5.4","usage":{"input_tokens":2,"output_tokens":1}}}`,
-		))
-		cancelWrite()
-		if writeErr != nil {
-			upstreamErrCh <- writeErr
-			return
+			event := fmt.Sprintf(
+				`{"type":"response.completed","response":{"id":"resp_usage_e2e_%d","model":"gpt-5.4","usage":{"input_tokens":%d,"output_tokens":1}}}`,
+				turn,
+				turn+1,
+			)
+			writeCtx, cancelWrite := context.WithTimeout(r.Context(), 3*time.Second)
+			writeErr := conn.Write(writeCtx, coderws.MessageText, []byte(event))
+			cancelWrite()
+			if writeErr != nil {
+				upstreamErrCh <- writeErr
+				return
+			}
 		}
 		_ = conn.Close(coderws.StatusNormalClosure, "done")
 		upstreamErrCh <- nil
@@ -1553,7 +1694,7 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
 
 	accountRepo := &openAIWSUsageHandlerAccountRepoStub{account: account}
-	usageRepo := &openAIWSUsageHandlerUsageLogRepoStub{created: make(chan *service.UsageLog, 1)}
+	usageRepo := &openAIWSUsageHandlerUsageLogRepoStub{created: make(chan *service.UsageLog, turnCount)}
 
 	var channelSvc *service.ChannelService
 	if len(tc.channelMapping) > 0 {
@@ -1594,6 +1735,16 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 		nil,
 		nil, // userPlatformQuotaRepo
 	)
+	var bodyLogRepo *openAIWSUsageHandlerGatewayBodyLogRepoStub
+	if tc.captureBodyLogs {
+		bodyLogRepo = &openAIWSUsageHandlerGatewayBodyLogRepoStub{}
+		bodyLogSettings := service.NewSettingService(&openAIWSUsageHandlerSettingRepoStub{values: map[string]string{
+			service.SettingKeyGatewayBodyLogEnabled:         "true",
+			service.SettingKeyGatewayBodyLogCaptureRequest:  "true",
+			service.SettingKeyGatewayBodyLogCaptureResponse: "true",
+		}}, &config.Config{})
+		gatewaySvc.SetGatewayBodyLogService(service.NewGatewayBodyLogService(bodyLogRepo, bodyLogSettings))
+	}
 
 	cache := &concurrencyCacheMock{
 		acquireUserSlotFn: func(ctx context.Context, userID int64, maxConcurrency int, requestID string) (bool, error) {
@@ -1651,21 +1802,39 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 	cancelRead()
 	require.NoError(t, err)
 	require.Equal(t, "response.completed", gjson.GetBytes(event, "type").String())
+	if turnCount > 1 {
+		writeCtx, cancelWrite = context.WithTimeout(context.Background(), 3*time.Second)
+		err = clientConn.Write(writeCtx, coderws.MessageText, []byte(tc.secondPayload))
+		cancelWrite()
+		require.NoError(t, err)
+
+		readCtx, cancelRead = context.WithTimeout(context.Background(), 3*time.Second)
+		_, event, err = clientConn.Read(readCtx)
+		cancelRead()
+		require.NoError(t, err)
+		require.Equal(t, "response.completed", gjson.GetBytes(event, "type").String())
+	}
 	_ = clientConn.Close(coderws.StatusNormalClosure, "done")
 
-	var usageLog *service.UsageLog
-	select {
-	case usageLog = <-usageRepo.created:
-		require.NotNil(t, usageLog)
-	case <-time.After(3 * time.Second):
-		t.Fatal("等待 WebSocket usage log 写入超时")
+	usageLogs := make([]*service.UsageLog, 0, turnCount)
+	for len(usageLogs) < turnCount {
+		select {
+		case usageLog := <-usageRepo.created:
+			require.NotNil(t, usageLog)
+			usageLogs = append(usageLogs, usageLog)
+		case <-time.After(3 * time.Second):
+			t.Fatal("等待 WebSocket usage log 写入超时")
+		}
 	}
 
-	var upstreamFirstPayload []byte
-	select {
-	case upstreamFirstPayload = <-upstreamPayloadCh:
-	case <-time.After(3 * time.Second):
-		t.Fatal("等待上游 WebSocket 首帧超时")
+	upstreamPayloads := make([][]byte, 0, turnCount)
+	for len(upstreamPayloads) < turnCount {
+		select {
+		case payload := <-upstreamPayloadCh:
+			upstreamPayloads = append(upstreamPayloads, payload)
+		case <-time.After(3 * time.Second):
+			t.Fatal("等待上游 WebSocket 消息超时")
+		}
 	}
 
 	select {
@@ -1675,9 +1844,20 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 		t.Fatal("等待上游 WebSocket 结束超时")
 	}
 
+	var bodyLogs []*service.GatewayBodyLog
+	if bodyLogRepo != nil {
+		require.Eventually(t, func() bool {
+			bodyLogs = bodyLogRepo.snapshot()
+			return len(bodyLogs) == turnCount
+		}, 3*time.Second, 10*time.Millisecond)
+	}
+
 	return openAIResponsesWSUsageLogResult{
-		log:                  usageLog,
-		upstreamFirstPayload: upstreamFirstPayload,
+		log:                  usageLogs[0],
+		logs:                 usageLogs,
+		upstreamFirstPayload: upstreamPayloads[0],
+		upstreamPayloads:     upstreamPayloads,
+		bodyLogs:             bodyLogs,
 	}
 }
 

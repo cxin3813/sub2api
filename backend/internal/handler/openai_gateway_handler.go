@@ -9,6 +9,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -1485,8 +1486,33 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			)
 		}
 
-		// WebSocket 首包可能很大，hash 必须在 hooks 外算成字符串，避免 AfterTurn 闭包保活请求体。
-		requestPayloadHash := service.HashUsageRequestPayload(wsFirstMessage)
+		type wsTurnRequestSnapshot struct {
+			body []byte
+			hash string
+		}
+		var turnRequestSnapshotsMu sync.Mutex
+		turnRequestSnapshots := map[int]wsTurnRequestSnapshot{
+			1: {
+				body: append([]byte(nil), wsFirstMessage...),
+				hash: service.HashUsageRequestPayload(wsFirstMessage),
+			},
+		}
+		captureTurnRequestSnapshot := func(turn int, payload []byte) {
+			turnRequestSnapshotsMu.Lock()
+			defer turnRequestSnapshotsMu.Unlock()
+			turnRequestSnapshots[turn] = wsTurnRequestSnapshot{
+				body: append([]byte(nil), payload...),
+				hash: service.HashUsageRequestPayload(payload),
+			}
+		}
+		requestSnapshotForTurn := func(turn int) wsTurnRequestSnapshot {
+			turnRequestSnapshotsMu.Lock()
+			defer turnRequestSnapshotsMu.Unlock()
+			if snapshot, ok := turnRequestSnapshots[turn]; ok {
+				return snapshot
+			}
+			return turnRequestSnapshots[1]
+		}
 
 		hooks := &service.OpenAIWSIngressHooks{
 			InitialRequestModel: reqModel,
@@ -1508,6 +1534,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					writeContentModerationWSError(ctx, wsConn, decision)
 					return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, decision.Message, nil)
 				}
+				captureTurnRequestSnapshot(turn, payload)
 				return nil
 			},
 			BeforeTurn: func(turn int) error {
@@ -1551,7 +1578,8 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				// 届时 defer 已清除标记）。
 				defer clearCyberPolicyTurnState(c)
 				releaseTurnSlots()
-				h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, turnErr != nil, cyberBlockKey, channelMappingWS.ToUsageFields(reqModel, ""), requestPayloadHash)
+				turnRequestSnapshot := requestSnapshotForTurn(turn)
+				h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, turnErr != nil, cyberBlockKey, channelMappingWS.ToUsageFields(reqModel, ""), turnRequestSnapshot.hash)
 				if service.GetOpsCyberPolicy(c) != nil {
 					cyberBlockedThisConn = true
 				}
@@ -1598,10 +1626,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 						RequestPath:        requestPath,
 						RequestContentType: requestContentType,
 						RequestHeaderJSON:  requestHeaderJSON,
-						RequestBody:        wsFirstMessage,
+						RequestBody:        turnRequestSnapshot.body,
 						UserAgent:          userAgent,
 						IPAddress:          clientIP,
-						RequestPayloadHash: requestPayloadHash,
+						RequestPayloadHash: turnRequestSnapshot.hash,
 						APIKeyService:      h.apiKeyService,
 						QuotaPlatform:      quotaPlatform,
 						ChannelUsageFields: channelMappingWS.ToUsageFields(reqModel, result.UpstreamModel),
