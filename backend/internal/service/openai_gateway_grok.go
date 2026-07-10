@@ -102,6 +102,10 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 	var usage *OpenAIUsage
 	var firstTokenMs *int
 	responseID := ""
+	var responseBody []byte
+	var responseCapture *GatewayBodyLogBodyCapture
+	statusCode := resp.StatusCode
+	responseContentType := resp.Header.Get("Content-Type")
 	if reqStream {
 		streamResult, err := s.handleStreamingResponse(ctx, resp, c, account, startTime, originalModel, upstreamModel)
 		if err != nil {
@@ -110,6 +114,14 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 		usage = streamResult.usage
 		firstTokenMs = streamResult.firstTokenMs
 		responseID = strings.TrimSpace(streamResult.responseID)
+		responseBody = streamResult.responseBody
+		responseCapture = streamResult.responseCapture
+		if streamResult.statusCode > 0 {
+			statusCode = streamResult.statusCode
+		}
+		if streamResult.contentType != "" {
+			responseContentType = streamResult.contentType
+		}
 	} else {
 		nonStreamResult, err := s.handleNonStreamingResponse(ctx, resp, c, account, originalModel, upstreamModel)
 		if err != nil {
@@ -117,23 +129,34 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 		}
 		usage = nonStreamResult.usage
 		responseID = strings.TrimSpace(nonStreamResult.responseID)
+		responseBody = nonStreamResult.responseBody
+		if nonStreamResult.statusCode > 0 {
+			statusCode = nonStreamResult.statusCode
+		}
+		if nonStreamResult.contentType != "" {
+			responseContentType = nonStreamResult.contentType
+		}
 	}
 
 	if usage == nil {
 		usage = &OpenAIUsage{}
 	}
 	return &OpenAIForwardResult{
-		RequestID:       firstNonEmpty(resp.Header.Get("x-request-id"), resp.Header.Get("xai-request-id")),
-		ResponseID:      responseID,
-		Usage:           *usage,
-		Model:           originalModel,
-		UpstreamModel:   upstreamModel,
-		ReasoningEffort: ptrStringOrNil(normalizeOpenAIReasoningEffort(gjson.GetBytes(patchedBody, "reasoning.effort").String())),
-		Stream:          reqStream,
-		OpenAIWSMode:    false,
-		ResponseHeaders: resp.Header.Clone(),
-		Duration:        time.Since(startTime),
-		FirstTokenMs:    firstTokenMs,
+		RequestID:           firstNonEmpty(resp.Header.Get("x-request-id"), resp.Header.Get("xai-request-id")),
+		ResponseID:          responseID,
+		Usage:               *usage,
+		Model:               originalModel,
+		UpstreamModel:       upstreamModel,
+		ReasoningEffort:     ptrStringOrNil(normalizeOpenAIReasoningEffort(gjson.GetBytes(patchedBody, "reasoning.effort").String())),
+		Stream:              reqStream,
+		OpenAIWSMode:        false,
+		ResponseHeaders:     resp.Header.Clone(),
+		ResponseBody:        cloneBytes(responseBody),
+		ResponseCapture:     responseCapture,
+		StatusCode:          statusCode,
+		ResponseContentType: responseContentType,
+		Duration:            time.Since(startTime),
+		FirstTokenMs:        firstTokenMs,
 	}, nil
 }
 
@@ -150,6 +173,16 @@ func patchGrokResponsesBody(body []byte, upstreamModel string) ([]byte, error) {
 			out, err = sjson.DeleteBytes(out, unsupportedField)
 			if err != nil {
 				return nil, err
+			}
+		}
+	}
+	if strings.EqualFold(upstreamModel, "grok-4.5") {
+		for _, unsupportedField := range []string{"presence_penalty", "presencePenalty", "frequency_penalty", "frequencyPenalty", "stop"} {
+			if gjson.GetBytes(out, unsupportedField).Exists() {
+				out, err = sjson.DeleteBytes(out, unsupportedField)
+				if err != nil {
+					return nil, err
+				}
 			}
 		}
 	}
