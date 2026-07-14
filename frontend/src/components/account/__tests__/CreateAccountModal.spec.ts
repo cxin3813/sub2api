@@ -1,10 +1,17 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { defineComponent } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { createAccountMock, checkMixedChannelRiskMock } = vi.hoisted(() => ({
+const {
+  createAccountMock,
+  checkMixedChannelRiskMock,
+  importCodexSessionMock,
+  createOpenAICodexPATMock,
+} = vi.hoisted(() => ({
   createAccountMock: vi.fn(),
-  checkMixedChannelRiskMock: vi.fn()
+  checkMixedChannelRiskMock: vi.fn(),
+  importCodexSessionMock: vi.fn(),
+  createOpenAICodexPATMock: vi.fn(),
 }))
 
 vi.mock('@/stores/app', () => ({
@@ -12,14 +19,12 @@ vi.mock('@/stores/app', () => ({
     showError: vi.fn(),
     showSuccess: vi.fn(),
     showInfo: vi.fn(),
-    showWarning: vi.fn()
-  })
+    showWarning: vi.fn(),
+  }),
 }))
 
 vi.mock('@/stores/auth', () => ({
-  useAuthStore: () => ({
-    isSimpleMode: true
-  })
+  useAuthStore: () => ({ isSimpleMode: true }),
 }))
 
 vi.mock('@/api/admin', () => ({
@@ -27,30 +32,28 @@ vi.mock('@/api/admin', () => ({
     accounts: {
       create: createAccountMock,
       checkMixedChannelRisk: checkMixedChannelRiskMock,
-      importCodexSession: vi.fn(),
-      exchangeCode: vi.fn()
+      importCodexSession: importCodexSessionMock,
+      createOpenAICodexPAT: createOpenAICodexPATMock,
     },
     settings: {
       getWebSearchEmulationConfig: vi.fn().mockResolvedValue({ enabled: false, providers: [] }),
-      getSettings: vi.fn().mockResolvedValue({})
+      getSettings: vi.fn().mockResolvedValue({}),
     },
     tlsFingerprintProfiles: {
-      list: vi.fn().mockResolvedValue([])
-    }
-  }
+      list: vi.fn().mockResolvedValue([]),
+    },
+  },
 }))
 
 vi.mock('@/api/admin/accounts', () => ({
-  getAntigravityDefaultModelMapping: vi.fn().mockResolvedValue({})
+  getAntigravityDefaultModelMapping: vi.fn().mockResolvedValue([]),
 }))
 
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   return {
     ...actual,
-    useI18n: () => ({
-      t: (key: string) => key
-    })
+    useI18n: () => ({ t: (key: string) => key }),
   }
 })
 
@@ -58,106 +61,196 @@ import CreateAccountModal from '../CreateAccountModal.vue'
 
 const BaseDialogStub = defineComponent({
   name: 'BaseDialog',
-  props: {
-    show: {
-      type: Boolean,
-      default: false
-    }
-  },
-  template: '<div v-if="show"><slot /><slot name="footer" /></div>'
+  props: { show: { type: Boolean, default: false } },
+  template: '<div v-if="show"><slot /><slot name="footer" /></div>',
 })
 
-const SelectStub = defineComponent({
-  name: 'SelectStub',
-  props: {
-    modelValue: {
-      type: [String, Number, Boolean, null],
-      default: ''
-    },
-    options: {
-      type: Array,
-      default: () => []
-    }
-  },
-  emits: ['update:modelValue'],
+const OAuthAuthorizationFlowStub = defineComponent({
+  name: 'OAuthAuthorizationFlow',
+  emits: ['import-codex-session', 'import-codex-pat'],
   template: `
-    <select
-      v-bind="$attrs"
-      :value="modelValue"
-      @change="$emit('update:modelValue', $event.target.value)"
-    >
-      <option v-for="option in options" :key="option.value" :value="option.value">
-        {{ option.label }}
-      </option>
-    </select>
-  `
+    <div>
+      <button data-testid="import-codex-session" @click="$emit('import-codex-session', 'session-json')">session</button>
+      <button data-testid="import-codex-pat" @click="$emit('import-codex-pat', 'pat-token')">pat</button>
+    </div>
+  `,
 })
 
 function mountModal() {
   return mount(CreateAccountModal, {
-    props: {
-      show: true,
-      proxies: [],
-      groups: []
-    },
+    props: { show: true, proxies: [], groups: [] },
     global: {
       stubs: {
         BaseDialog: BaseDialogStub,
+        OAuthAuthorizationFlow: OAuthAuthorizationFlowStub,
         ConfirmDialog: true,
-        Select: SelectStub,
+        Select: true,
         Icon: true,
+        PlatformIcon: true,
         ProxySelector: true,
         ProxyAdBanner: true,
         GroupSelector: true,
         ModelWhitelistSelector: true,
         QuotaLimitCard: true,
-        OAuthAuthorizationFlow: true
-      }
-    }
+      },
+    },
   })
+}
+
+async function selectButtonByText(wrapper: ReturnType<typeof mountModal>, text: string) {
+  const button = wrapper.findAll('button').find((candidate) => candidate.text().includes(text))
+  expect(button).toBeDefined()
+  await button?.trigger('click')
 }
 
 async function fillOpenAIAPIKeyForm(wrapper: ReturnType<typeof mountModal>, userAgent?: string) {
   await wrapper.get('[data-tour="account-form-name"]').setValue('OpenAI Key')
-  await wrapper.findAll('button').find((button) => button.text().includes('OpenAI'))!.trigger('click')
-  await wrapper.findAll('button').find((button) => button.text().includes('API Key'))!.trigger('click')
+  await selectButtonByText(wrapper, 'OpenAI')
+  await selectButtonByText(wrapper, 'API Key')
   await wrapper.get('input[type="password"]').setValue('sk-test')
   if (userAgent !== undefined) {
     await wrapper.get('[data-testid="openai-custom-user-agent"]').setValue(userAgent)
   }
 }
 
-describe('CreateAccountModal', () => {
+describe('CreateAccountModal OpenAI custom User-Agent', () => {
   beforeEach(() => {
-    createAccountMock.mockReset()
-    checkMixedChannelRiskMock.mockReset()
-    createAccountMock.mockResolvedValue({})
-    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    createAccountMock.mockReset().mockResolvedValue({})
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
   })
 
   it('submits account-level custom User-Agent for OpenAI APIKey accounts', async () => {
     const wrapper = mountModal()
-
     await fillOpenAIAPIKeyForm(wrapper, ' custom-openai-client/1.2.3 ')
     await wrapper.get('form#create-account-form').trigger('submit.prevent')
     await flushPromises()
 
     expect(createAccountMock).toHaveBeenCalledTimes(1)
     expect(createAccountMock.mock.calls[0]?.[0]?.credentials).toEqual(
-      expect.objectContaining({
-        user_agent: 'custom-openai-client/1.2.3'
-      })
+      expect.objectContaining({ user_agent: 'custom-openai-client/1.2.3' }),
     )
   })
 
-  it('omits account-level custom User-Agent when OpenAI APIKey field is blank', async () => {
+  it('omits account-level custom User-Agent when the OpenAI APIKey field is blank', async () => {
     const wrapper = mountModal()
-
     await fillOpenAIAPIKeyForm(wrapper, '')
     await wrapper.get('form#create-account-form').trigger('submit.prevent')
     await flushPromises()
 
     expect(createAccountMock).toHaveBeenCalledTimes(1)
     expect(createAccountMock.mock.calls[0]?.[0]?.credentials).not.toHaveProperty('user_agent')
+  })
+})
+
+async function submitApiKeyAccount(platform: 'openai' | 'anthropic', enableLongContextBilling = false) {
+  const wrapper = mountModal()
+  await selectButtonByText(wrapper, platform === 'openai' ? 'OpenAI' : 'admin.accounts.claudeConsole')
+  if (platform === 'openai') {
+    await selectButtonByText(wrapper, 'API Key')
+  }
+  await wrapper.get('form#create-account-form input[type="text"]').setValue(`${platform} account`)
+  await wrapper.get('form#create-account-form input[type="password"]').setValue('test-api-key')
+  if (enableLongContextBilling) {
+    await wrapper.get('[data-testid="openai-long-context-billing-toggle"]').trigger('click')
+  }
+  await wrapper.get('form#create-account-form').trigger('submit.prevent')
+  await flushPromises()
+}
+
+async function openCodexImportStep(toggleClicks = 0) {
+  const wrapper = mountModal()
+  await selectButtonByText(wrapper, 'OpenAI')
+  for (let click = 0; click < toggleClicks; click += 1) {
+    await wrapper.get('[data-testid="openai-long-context-billing-toggle"]').trigger('click')
+  }
+  await wrapper.get('form#create-account-form input[type="text"]').setValue('Codex import')
+  await wrapper.get('form#create-account-form').trigger('submit.prevent')
+  return wrapper
+}
+
+describe('CreateAccountModal OpenAI long-context billing', () => {
+  beforeEach(() => {
+    createAccountMock.mockReset().mockResolvedValue({})
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    importCodexSessionMock.mockReset().mockResolvedValue({
+      created: 1,
+      updated: 0,
+      skipped: 0,
+      failed: 0,
+      errors: [],
+      warnings: [],
+    })
+    createOpenAICodexPATMock.mockReset().mockResolvedValue({})
+  })
+
+  it('sends false explicitly for normal OpenAI account creation by default', async () => {
+    await submitApiKeyAccount('openai')
+
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    expect(createAccountMock.mock.calls[0]?.[0]?.extra?.openai_long_context_billing_enabled).toBe(false)
+  })
+
+  it('sends true explicitly when OpenAI long-context billing is enabled', async () => {
+    await submitApiKeyAccount('openai', true)
+
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    expect(createAccountMock.mock.calls[0]?.[0]?.extra?.openai_long_context_billing_enabled).toBe(true)
+  })
+
+  it('omits the OpenAI setting for non-OpenAI account creation', async () => {
+    await submitApiKeyAccount('anthropic')
+
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    expect(createAccountMock.mock.calls[0]?.[0]?.extra?.openai_long_context_billing_enabled).toBeUndefined()
+  })
+
+  it('leaves Codex session import billing ownership to the backend', async () => {
+    const wrapper = await openCodexImportStep()
+    await wrapper.get('[data-testid="import-codex-session"]').trigger('click')
+    await flushPromises()
+
+    expect(importCodexSessionMock).toHaveBeenCalledTimes(1)
+    expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra?.openai_long_context_billing_enabled).toBeUndefined()
+  })
+
+  it('leaves Codex PAT import billing ownership to the backend', async () => {
+    const wrapper = await openCodexImportStep()
+    await wrapper.get('[data-testid="import-codex-pat"]').trigger('click')
+    await flushPromises()
+
+    expect(createOpenAICodexPATMock).toHaveBeenCalledTimes(1)
+    expect(createOpenAICodexPATMock.mock.calls[0]?.[0]?.extra?.openai_long_context_billing_enabled).toBeUndefined()
+  })
+
+  it('sends explicit true for Codex session import after the toggle is enabled', async () => {
+    const wrapper = await openCodexImportStep(1)
+    await wrapper.get('[data-testid="import-codex-session"]').trigger('click')
+    await flushPromises()
+
+    expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra?.openai_long_context_billing_enabled).toBe(true)
+  })
+
+  it('sends explicit false for Codex session import after the toggle is changed back', async () => {
+    const wrapper = await openCodexImportStep(2)
+    await wrapper.get('[data-testid="import-codex-session"]').trigger('click')
+    await flushPromises()
+
+    expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra?.openai_long_context_billing_enabled).toBe(false)
+  })
+
+  it('sends explicit true for Codex PAT import after the toggle is enabled', async () => {
+    const wrapper = await openCodexImportStep(1)
+    await wrapper.get('[data-testid="import-codex-pat"]').trigger('click')
+    await flushPromises()
+
+    expect(createOpenAICodexPATMock.mock.calls[0]?.[0]?.extra?.openai_long_context_billing_enabled).toBe(true)
+  })
+
+  it('sends explicit false for Codex PAT import after the toggle is changed back', async () => {
+    const wrapper = await openCodexImportStep(2)
+    await wrapper.get('[data-testid="import-codex-pat"]').trigger('click')
+    await flushPromises()
+
+    expect(createOpenAICodexPATMock.mock.calls[0]?.[0]?.extra?.openai_long_context_billing_enabled).toBe(false)
   })
 })
