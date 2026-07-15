@@ -30,6 +30,11 @@ func (c *gatewayBodyLogStreamCapture) WriteString(value string) {
 	c.WriteBytes([]byte(value))
 }
 
+func (c *gatewayBodyLogStreamCapture) Write(value []byte) (int, error) {
+	c.WriteBytes(value)
+	return len(value), nil
+}
+
 func (c *gatewayBodyLogStreamCapture) WriteBytes(value []byte) {
 	if c == nil || len(value) == 0 {
 		return
