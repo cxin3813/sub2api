@@ -75,6 +75,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	}
 
 	body = normalizeOpenAIPassthroughRequestBody(account, body)
+	body = stripUnsupportedOpenAIPassthroughFields(body, account)
 
 	sanitizedBody, sanitized, err := sanitizeEmptyBase64InputImagesInOpenAIBody(body)
 	if err != nil {
@@ -212,6 +213,27 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		probeBody := s.readUpstreamErrorBody(resp)
 		_ = resp.Body.Close()
 		resp.Body = io.NopCloser(bytes.NewReader(probeBody))
+		if resp.StatusCode == http.StatusForbidden && hasOptionalOpenAIImageGenerationTool(openAIResponsesEndpoint, reqModel, body) {
+			if retryBody, stripped := stripOptionalOpenAIImageGenerationTool(body); stripped {
+				logger.LegacyPrintf("service.openai_gateway", "[OpenAI 自动透传] 上游拒绝可选 image_generation 工具，已去工具重试: account=%d model=%s", account.ID, reqModel)
+				retryUpstreamCtx, releaseRetryUpstreamCtx := detachUpstreamContext(ctx)
+				retryReq, retryBuildErr := s.buildUpstreamRequestOpenAIPassthrough(retryUpstreamCtx, c, account, retryBody, token)
+				releaseRetryUpstreamCtx()
+				if retryBuildErr == nil {
+					retryStart := time.Now()
+					retryResp, retryErr := s.httpUpstream.Do(retryReq, proxyURL, account.ID, account.Concurrency)
+					SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(retryStart).Milliseconds())
+					if retryErr == nil {
+						_ = resp.Body.Close()
+						body = retryBody
+						resp = retryResp
+						if resp.StatusCode < 400 {
+							break
+						}
+					}
+				}
+			}
+		}
 		if !agentTaskRecoveryTried && s.isAgentIdentityAccount(ctx, account) && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, probeBody) {
 			agentTaskRecoveryTried = true
 			expectedTaskID := account.GetCredential("task_id")
@@ -754,6 +776,25 @@ func collectOpenAIPassthroughTimeoutHeaders(h http.Header) []string {
 	}
 	sort.Strings(matched)
 	return matched
+}
+
+func stripUnsupportedOpenAIPassthroughFields(body []byte, account *Account) []byte {
+	if len(body) == 0 || account == nil || account.Platform != PlatformOpenAI {
+		return body
+	}
+	var reqBody map[string]any
+	if err := json.Unmarshal(body, &reqBody); err != nil {
+		return body
+	}
+	if _, has := reqBody["max_output_tokens"]; !has {
+		return body
+	}
+	delete(reqBody, "max_output_tokens")
+	normalized, err := json.Marshal(reqBody)
+	if err != nil {
+		return body
+	}
+	return normalized
 }
 
 type openaiStreamingResultPassthrough struct {

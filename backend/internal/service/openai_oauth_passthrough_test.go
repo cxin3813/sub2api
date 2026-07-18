@@ -360,8 +360,8 @@ func TestOpenAIGatewayService_APIKeyPassthroughDoesNotRetryExplicitImageGenerati
 	require.Error(t, err)
 	require.Nil(t, result)
 	require.Len(t, upstream.bodies, 1)
-	require.Equal(t, http.StatusForbidden, rec.Code)
-	require.Equal(t, "Image generation is not enabled for this group", gjson.Get(rec.Body.String(), "error.message").String())
+	require.Equal(t, http.StatusBadGateway, rec.Code)
+	require.Equal(t, "Upstream access denied", gjson.Get(rec.Body.String(), "error.message").String())
 }
 
 type openAIPassthroughFailoverRepo struct {

@@ -673,6 +673,17 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 	if !ok {
 		return nil, errors.New("streaming not supported")
 	}
+	streamCapture := newGatewayBodyLogStreamCapture(GatewayBodyLogMaxBytesLimit)
+	writeClientString := func(value string) error {
+		n, err := io.WriteString(w, value)
+		if n > 0 {
+			if n > len(value) {
+				n = len(value)
+			}
+			streamCapture.WriteString(value[:n])
+		}
+		return err
+	}
 
 	usage := &ClaudeUsage{}
 	var firstTokenMs *int
@@ -784,13 +795,29 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 			// json.Marshal 不可能在已知 string-only 输入上失败，保守 fallback
 			body = []byte(fmt.Sprintf(`{"type":"error","error":{"type":%q,"message":%q}}`, reason, message))
 		}
-		_, _ = fmt.Fprintf(w, "event: error\ndata: %s\n\n", body)
+		_ = writeClientString(fmt.Sprintf("event: error\ndata: %s\n\n", body))
 		flusher.Flush()
 	}
 
 	needModelReplace := originalModel != mappedModel
 	clientDisconnected := false // 客户端断开标志，断开后继续读取上游以获取完整usage
 	sawTerminalEvent := false
+	resultWithUsage := func() *streamingResult {
+		responseCapture := streamCapture.Snapshot()
+		var responseBody []byte
+		if responseCapture != nil {
+			responseBody = responseCapture.Body
+		}
+		return &streamingResult{
+			usage:            usage,
+			firstTokenMs:     firstTokenMs,
+			clientDisconnect: clientDisconnected,
+			responseBody:     responseBody,
+			responseCapture:  responseCapture,
+			statusCode:       resp.StatusCode,
+			contentType:      "text/event-stream",
+		}
+	}
 	useNoopDeltaKeepalive := c != nil && c.Request != nil && shouldUseClaudeCodeNoopDeltaKeepalive(c.GetHeader("User-Agent"))
 	noopDeltaKeepaliveBlockIndex := -1
 	noopDeltaKeepaliveDeltaType := ""
@@ -963,9 +990,9 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 			if !ok {
 				// 上游完成，返回结果
 				if !sawTerminalEvent {
-					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, fmt.Errorf("stream usage incomplete: missing terminal event")
+					return resultWithUsage(), fmt.Errorf("stream usage incomplete: missing terminal event")
 				}
-				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
+				return resultWithUsage(), nil
 			}
 			if ev.err != nil {
 				if sawTerminalEvent {
@@ -1030,7 +1057,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				for _, block := range outputBlocks {
 					if !clientDisconnected {
 						restored := reverseToolNamesIfPresent(c, []byte(block))
-						if _, werr := fmt.Fprint(w, string(restored)); werr != nil {
+						if werr := writeClientString(string(restored)); werr != nil {
 							clientDisconnected = true
 							logger.LegacyPrintf("service.gateway", "Client disconnected during streaming, continuing to drain upstream for billing")
 							// 不 break：客户端断开后仍需继续合并本事件及后续事件的 usage，
@@ -1087,7 +1114,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 					keepaliveBlock = block
 				}
 			}
-			if _, werr := fmt.Fprint(w, keepaliveBlock); werr != nil {
+			if werr := writeClientString(keepaliveBlock); werr != nil {
 				clientDisconnected = true
 				logger.LegacyPrintf("service.gateway", "Client disconnected during keepalive ping, continuing to drain upstream for billing")
 				continue
