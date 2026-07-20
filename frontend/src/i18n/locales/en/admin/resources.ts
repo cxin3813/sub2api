@@ -549,6 +549,11 @@ export default {
       viewBodyLog: 'View Body Log',
       failedToLoadBodyLog: 'Failed to load body log',
       emptyBodyLog: 'No body log available',
+      statusCode: 'Response status', requestMethod: 'Request method', requestPath: 'Request path', platform: 'Platform', storageKind: 'Storage',
+      apiKeyId: 'API key ID', accountId: 'Account ID', clientRequestId: 'Client request ID',
+      requestContentType: 'Request content type', responseContentType: 'Response content type',
+      requestBytes: 'Request body size', responseBytes: 'Response body size', requestTruncated: 'Request body truncated', responseTruncated: 'Response body truncated',
+      requestHeaders: 'Request headers', responseHeaders: 'Response headers', requestBody: 'Request body', responseBody: 'Response body',
       userDeletedBadge: 'Deleted',
       tokenRanking: {
         subtitle: 'Per-user token usage for the current filters and time range',

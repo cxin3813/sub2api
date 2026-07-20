@@ -346,6 +346,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		mappedModelBytes = []byte(mappedModel)
 	}
 	bufferedStreamEvents := make([][]byte, 0, 4)
+	streamCapture := newGatewayBodyLogStreamCapture(GatewayBodyLogMaxBytesLimit)
 	eventCount := 0
 	tokenEventCount := 0
 	terminalEventCount := 0
@@ -398,8 +399,11 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		frame = append(frame, "data: "...)
 		frame = append(frame, message...)
 		frame = append(frame, '\n', '\n')
-		_, wErr := c.Writer.Write(frame)
+		written, wErr := c.Writer.Write(frame)
 		if wErr == nil {
+			if written > 0 {
+				streamCapture.Write(frame[:written])
+			}
 			wroteDownstream = true
 			pendingFlushEvents++
 			flushStreamWriter(forceFlush)
@@ -747,6 +751,16 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		clientDisconnected,
 	)
 
+	responseCapture := streamCapture.Snapshot()
+	responseBody := finalResponse
+	responseContentType := "application/json"
+	if reqStream {
+		responseContentType = "text/event-stream"
+		if responseCapture != nil {
+			responseBody = responseCapture.Body
+		}
+	}
+
 	return &OpenAIForwardResult{
 		RequestID:             responseID,
 		Usage:                 *usage,
@@ -760,6 +774,10 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		OpenAIWSMode:          true,
 		UpstreamTerminalEvent: upstreamTerminalEvent,
 		ResponseHeaders:       lease.HandshakeHeaders(),
+		ResponseBody:          responseBody,
+		ResponseCapture:       responseCapture,
+		StatusCode:            http.StatusOK,
+		ResponseContentType:   responseContentType,
 		Duration:              time.Since(startTime),
 		FirstTokenMs:          firstTokenMs,
 	}, nil

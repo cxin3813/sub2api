@@ -546,6 +546,11 @@ export default {
       viewBodyLog: '查看 Body Log',
       failedToLoadBodyLog: '加载 Body Log 失败',
       emptyBodyLog: '暂无 Body Log 详情',
+      statusCode: '响应状态码', requestMethod: '请求方法', requestPath: '请求路径', platform: '平台', storageKind: '存储方式',
+      apiKeyId: 'API Key ID', accountId: '账号 ID', clientRequestId: '客户端请求 ID',
+      requestContentType: '请求 Content-Type', responseContentType: '响应 Content-Type',
+      requestBytes: '请求体大小', responseBytes: '响应体大小', requestTruncated: '请求体已截断', responseTruncated: '响应体已截断',
+      requestHeaders: '请求头', responseHeaders: '响应头', requestBody: '请求体', responseBody: '响应体',
       userDeletedBadge: '已删除',
       tokenRanking: {
         subtitle: '按当前筛选与时间范围统计每个用户的 Token 用量',
