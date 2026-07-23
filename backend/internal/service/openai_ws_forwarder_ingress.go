@@ -197,6 +197,11 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				nil,
 			)
 		}
+		if hooks != nil && (hooks.MaxReasoningEffort != "" || len(hooks.ReasoningEffortMappings) > 0) {
+			if capped, changed := ApplyOpenAIReasoningEffortPolicy(normalized, hooks.MaxReasoningEffort, hooks.ReasoningEffortMappings); changed {
+				normalized = capped
+			}
+		}
 
 		originalModel := strings.TrimSpace(values[1].String())
 		modelMissing := originalModel == ""
@@ -461,6 +466,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		var bridgeReplayInput []json.RawMessage
 		bridgeReplayInputExists := false
 		for turn := 1; ; turn++ {
+			if hooks != nil && hooks.AfterRequestNormalization != nil {
+				hooks.AfterRequestNormalization(turn, currentBridgePayload.payloadRaw, currentBridgePayload.originalModel)
+			}
 			if turn > 1 && hooks != nil && hooks.BeforeRequest != nil {
 				if err := hooks.BeforeRequest(turn, currentBridgePayload.payloadRaw, currentBridgePayload.originalModel); err != nil {
 					return err
@@ -1197,6 +1205,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		return true
 	}
 	for {
+		if hooks != nil && hooks.AfterRequestNormalization != nil {
+			hooks.AfterRequestNormalization(turn, currentPayload, currentOriginalModel)
+		}
 		if turn > 1 && !skipBeforeTurn && hooks != nil && hooks.BeforeRequest != nil {
 			if err := hooks.BeforeRequest(turn, currentPayload, currentOriginalModel); err != nil {
 				return err

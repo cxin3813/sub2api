@@ -627,6 +627,9 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 
 	// Set common headers
 	req.Header.Set("Content-Type", "application/json")
+	if !isOAuth {
+		applyOpenAICodexProbeHeaders(req.Header)
+	}
 	if credentialAccount.IsOpenAIAgentIdentity() {
 		authHeaders, authErr := buildAgentIdentityAuthenticationHeaders(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityTaskMu, credentialAccount)
 		if authErr != nil {
@@ -990,11 +993,8 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 	} else {
 		req.Header.Set("Authorization", "Bearer "+authToken)
 	}
-	req.Header.Set("OpenAI-Beta", "responses=experimental")
-	req.Header.Set("Originator", "codex_cli_rs")
-	req.Header.Set("User-Agent", codexCLIUserAgent)
+	applyOpenAICodexProbeHeaders(req.Header)
 	applyOpenAIAccountTestUserAgent(req, account, codexCLIUserAgent)
-	req.Header.Set("Version", codexCLIVersion)
 	probeSessionID := compactProbeSessionID(account.ID)
 	req.Header.Set("Session_ID", probeSessionID)
 	req.Header.Set("Conversation_ID", probeSessionID)
