@@ -415,9 +415,8 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		if maxOutputTokens.Exists() {
 			switch account.Platform {
 			case PlatformOpenAI:
-				// Compatible OpenAI upstreams are inconsistent here; omit the field to
-				// avoid hard failures from providers that reject max_output_tokens.
-				markPatchDelete("max_output_tokens")
+				// Preserve an explicit client value. Compatible upstreams that reject
+				// it are handled by the rejected-field retry after the first response.
 			case PlatformAnthropic:
 				decoded, decodeErr := ensureReqBody()
 				if decodeErr != nil {
