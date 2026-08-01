@@ -506,8 +506,10 @@ func runUpstreamToClient(
 		case coderws.MessageBinary:
 			// binary frame 直接透传，不进入 JSON 观测路径（避免无效解析开销）。
 		}
-		emitTurnComplete(onTurnComplete, state, observedEvent)
 		if dropDownstreamWrites != nil && dropDownstreamWrites.Load() {
+			// 客户端已经断开时仍需消费 terminal usage；该帧未实际发送到客户端，
+			// 因而上层的响应捕获只会包含此前成功写出的帧。
+			emitTurnComplete(onTurnComplete, state, observedEvent)
 			if droppedFrames != nil {
 				droppedFrames.Add(1)
 			}
@@ -537,6 +539,8 @@ func runUpstreamToClient(
 			afterClientWrite(msgType, payload, writeErr)
 		}
 		if writeErr != nil {
+			// 保持失败场景的 usage 回调；上层只会看到此前已成功下发的响应帧。
+			emitTurnComplete(onTurnComplete, state, observedEvent)
 			emitRelayTrace(onTrace, RelayTraceEvent{
 				Stage:           "write_client_failed",
 				Direction:       "upstream_to_client",
@@ -549,6 +553,9 @@ func runUpstreamToClient(
 			return
 		}
 		wroteDownstream = true
+		// 只有实际写给客户端成功后才完成 turn，确保上层可安全记录完整且
+		// 可审计的客户端响应体（包含 terminal 帧）。
+		emitTurnComplete(onTurnComplete, state, observedEvent)
 		if afterWriteClient != nil {
 			afterWriteClient(msgType, payload)
 		}

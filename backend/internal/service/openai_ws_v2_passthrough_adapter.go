@@ -28,6 +28,9 @@ type openAIWSClientFrameConn struct {
 	// The relay observes upstream payloads, while clients must keep seeing the
 	// model identifier they supplied for the current turn.
 	restoreResponseModel func([]byte) []byte
+	// onFrameWritten observes the exact payload after client-visible response
+	// normalization, and only after the websocket write succeeds.
+	onFrameWritten func(coderws.MessageType, []byte)
 }
 
 // openAIWSPolicyEnforcingFrameConn wraps a client-side FrameConn and runs
@@ -640,7 +643,11 @@ func (c *openAIWSClientFrameConn) WriteFrame(ctx context.Context, msgType coderw
 			payload = c.restoreResponseModel(payload)
 		}
 	}
-	return c.conn.Write(ctx, msgType, payload)
+	err := c.conn.Write(ctx, msgType, payload)
+	if err == nil && c.onFrameWritten != nil {
+		c.onFrameWritten(msgType, payload)
+	}
+	return err
 }
 
 func (c *openAIWSClientFrameConn) Close() error {
@@ -901,6 +908,24 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		},
 	}
 
+	captureResponse, captureResponseErr := s.gatewayBodyLogService.responseCaptureEnabled(ctx)
+	if captureResponseErr != nil {
+		logger.LegacyPrintf("service.openai_gateway", "Read gateway body log response setting failed: %v", captureResponseErr)
+		captureResponse = false
+	}
+	var responseCapture *gatewayBodyLogStreamCapture
+	if captureResponse {
+		responseCapture = newGatewayBodyLogStreamCapture(GatewayBodyLogMaxBytesLimit)
+	}
+	takeResponseCapture := func() *GatewayBodyLogBodyCapture {
+		if responseCapture == nil {
+			return nil
+		}
+		snapshot := responseCapture.Snapshot()
+		responseCapture = newGatewayBodyLogStreamCapture(GatewayBodyLogMaxBytesLimit)
+		return snapshot
+	}
+
 	completedTurns := atomic.Int32{}
 	turnLifecycle := newOpenAIWSPassthroughTurnLifecycle(true)
 	clientFrameConn := &openAIWSClientFrameConn{
@@ -915,6 +940,11 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			}
 			requestModel, upstreamModel := usageMeta.turnModels("")
 			return replaceOpenAIWSMessageModel(payload, upstreamModel, requestModel)
+		},
+		onFrameWritten: func(_ coderws.MessageType, payload []byte) {
+			if responseCapture != nil {
+				responseCapture.WriteBytes(payload)
+			}
 		},
 	}
 	policyClientConn := &openAIWSPolicyEnforcingFrameConn{
@@ -1111,6 +1141,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 					OpenAIWSMode:          true,
 					UpstreamTerminalEvent: normalizeOpenAIWSTerminalEvent(turn.TerminalEventType),
 					ResponseHeaders:       cloneHeader(handshakeHeaders),
+					ResponseCapture:       takeResponseCapture(),
 					Duration:              turn.Duration,
 					FirstTokenMs:          turn.FirstTokenMs,
 				}

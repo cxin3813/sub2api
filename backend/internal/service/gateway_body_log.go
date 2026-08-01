@@ -122,6 +122,23 @@ func (s *GatewayBodyLogService) Enabled(ctx context.Context) (bool, error) {
 	return settings.Enabled, nil
 }
 
+// responseCaptureEnabled avoids retaining streamed response frames unless the
+// body-log response capture setting explicitly permits it.
+func (s *GatewayBodyLogService) responseCaptureEnabled(ctx context.Context) (bool, error) {
+	if s == nil || s.repo == nil {
+		return false, nil
+	}
+	settings := defaultGatewayBodyLogSettings()
+	var err error
+	if s.settings != nil {
+		settings, err = s.settings.GetGatewayBodyLogSettings(ctx)
+		if err != nil {
+			return false, err
+		}
+	}
+	return settings.Enabled && settings.CaptureResponse, nil
+}
+
 func (s *GatewayBodyLogService) Capture(ctx context.Context, input GatewayBodyLogCaptureInput) error {
 	if s == nil || s.repo == nil || input.UsageLog == nil || input.UsageLog.ID <= 0 {
 		return nil
