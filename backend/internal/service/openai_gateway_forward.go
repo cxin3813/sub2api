@@ -610,15 +610,6 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 		}
 	}
-	preserveHTTPResponsesContinuation := false
-	if account.IsOpenAIApiKey() {
-		if enabled, ok := account.Extra["use_responses_api"].(bool); ok && enabled {
-			preserveHTTPResponsesContinuation = true
-		}
-		if account.IsOpenAIResponsesWebSocketV2Enabled() {
-			preserveHTTPResponsesContinuation = true
-		}
-	}
 	// Ollama Cloud（实际 Responses 上游为 ollama.com）输出上限 clamp：对 Codex 与
 	// 非 Codex 客户端一律执行（真实 Codex 客户端同样会带超限 max_output_tokens 被
 	// ollama.com 以 400 拒绝）。在 `!isCodexCLI` 归一化块之后独立调用：非 Codex 时
@@ -628,7 +619,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		markPatchSet("max_output_tokens", clampedCap)
 	}
 	if wsDecision.Transport != OpenAIUpstreamTransportResponsesWebsocketV2 &&
-		!preserveHTTPResponsesContinuation && gjson.GetBytes(body, "previous_response_id").Exists() {
+		!account.IsOpenAIApiKey() && gjson.GetBytes(body, "previous_response_id").Exists() {
 		markPatchDelete("previous_response_id")
 	}
 	if openAIRequestBodyMayContainEmptyBase64InputImage(body) {

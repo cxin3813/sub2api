@@ -667,7 +667,7 @@ func TestOpenAIGatewayServiceForwardReturnsFinalRequestAndResponsePayloads(t *te
 	require.Equal(t, responseBody, string(result.ResponseBody))
 	require.Equal(t, result.ResponseBody, rec.Body.Bytes())
 	require.Equal(t, int64(64), gjson.GetBytes(result.RequestBody, "max_output_tokens").Int())
-	require.NotContains(t, string(result.RequestBody), "previous_response_id")
+	require.Equal(t, "resp_previous", gjson.GetBytes(result.RequestBody, "previous_response_id").String())
 	require.Equal(t, "gpt-5.1", gjson.GetBytes(result.RequestBody, "model").String())
 	require.Equal(t, "hello", gjson.GetBytes(result.RequestBody, "input").String())
 	require.JSONEq(t, string(result.RequestBody), string(upstream.lastBody))
