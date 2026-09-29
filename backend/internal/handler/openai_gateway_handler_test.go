@@ -1523,6 +1523,24 @@ func TestOpenAIResponsesWebSocket_PassthroughBodyLogUsesCurrentTurnPayload(t *te
 	require.True(t, gotBodies[secondPayload], "第二轮 body-log 应记录当前轮请求体，不能复用首包")
 }
 
+func TestOpenAIResponsesWebSocket_IngressBodyLogUsesNormalizedWindowPayload(t *testing.T) {
+	got := runOpenAIResponsesWebSocketUsageLogCase(t, openAIResponsesWSUsageLogCase{
+		firstPayload:    `{"type":"response.create","model":"gpt-5.4","input":"first turn","client_metadata":{"x-codex-window-id":"window-a"}}`,
+		secondPayload:   `{"type":"response.create","model":"gpt-5.4","input":"second turn","previous_response_id":"resp_usage_e2e_1","client_metadata":{"x-codex-window-id":"window-b"}}`,
+		ingressMode:     service.OpenAIWSIngressModeCtxPool,
+		captureBodyLogs: true,
+	})
+
+	require.Len(t, got.upstreamPayloads, 2)
+	require.Len(t, got.bodyLogs, 2)
+	require.False(t, gjson.GetBytes(got.upstreamPayloads[1], "previous_response_id").Exists())
+	secondBodyLog := got.bodyLogs[1]
+	if gjson.GetBytes(secondBodyLog.RequestBody, "input").String() != "second turn" {
+		secondBodyLog = got.bodyLogs[0]
+	}
+	require.JSONEq(t, string(got.upstreamPayloads[1]), string(secondBodyLog.RequestBody))
+}
+
 func TestOpenAIResponsesWebSocket_PassthroughBodyLogCapturesClientResponse(t *testing.T) {
 	got := runOpenAIResponsesWebSocketUsageLogCase(t, openAIResponsesWSUsageLogCase{
 		firstPayload:    `{"type":"response.create","model":"gpt-5.4","input":"body-log response","stream":false}`,
