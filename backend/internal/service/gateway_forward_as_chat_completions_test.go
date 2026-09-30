@@ -199,7 +199,7 @@ func TestHandleCCStreamingFromAnthropic_CompactSSEFormat(t *testing.T) {
 	}
 
 	svc := &GatewayService{}
-	result, err := svc.handleCCStreamingFromAnthropic(resp, c, "k3", "k3", nil, time.Now(), nil, true)
+	result, err := svc.handleCCStreamingFromAnthropic(resp, c, "k3", "k3", nil, time.Now(), nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, 21, result.Usage.InputTokens)
@@ -236,14 +236,19 @@ func TestHandleCCStreamingFromAnthropic_PreservesMessageStartCacheUsageAndReason
 	}
 
 	svc := &GatewayService{}
-	result, err := svc.handleCCStreamingFromAnthropic(resp, c, "gpt-5", "claude-sonnet-4.5", &reasoningEffort, time.Now(), []byte(`{"model":"claude-sonnet-4.5"}`), true)
+	requestBody := []byte(`{"model":"claude-sonnet-4.5"}`)
+	result, err := svc.handleCCStreamingFromAnthropic(resp, c, "gpt-5", "claude-sonnet-4.5", &reasoningEffort, time.Now(), requestBody)
 	require.NoError(t, err)
 	require.NotNil(t, result)
+	require.Equal(t, requestBody, result.RequestBody)
+	requestBody[0] = ' '
+	require.Equal(t, byte('{'), result.RequestBody[0])
 	require.Equal(t, 20, result.Usage.InputTokens)
 	require.Equal(t, 8, result.Usage.OutputTokens)
 	require.Equal(t, 11, result.Usage.CacheReadInputTokens)
 	require.Equal(t, 4, result.Usage.CacheCreationInputTokens)
 	require.NotNil(t, result.ReasoningEffort)
 	require.Equal(t, "medium", *result.ReasoningEffort)
+	require.Contains(t, rec.Body.String(), `"usage":`)
 	require.Contains(t, rec.Body.String(), `[DONE]`)
 }
