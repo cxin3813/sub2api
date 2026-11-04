@@ -307,6 +307,9 @@
           <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
         </template>
 
+        <template #cell-body_log="{ row }">
+          <RouterLink :to="{ path: '/admin/body-logs', query: { usage: row.id } }" class="whitespace-nowrap text-xs font-medium text-primary-600 hover:underline">{{ t('bodyLogs.view') }}</RouterLink>
+        </template>
         <template #empty><EmptyState :message="t('usage.noRecords')" /></template>
       </DataTable>
     </div>
@@ -583,6 +586,7 @@ function accountBilled(row: { total_cost?: number | null; account_stats_cost?: n
 
 
 import DataTable from '@/components/common/DataTable.vue'
+import { RouterLink } from 'vue-router'
 import EmptyState from '@/components/common/EmptyState.vue'
 import IpGeoCell from '@/components/common/IpGeoCell.vue'
 import Icon from '@/components/icons/Icon.vue'

@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/bodylog"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
@@ -250,6 +251,7 @@ func usageRecordContext(parent context.Context, base context.Context) context.Co
 	if parent == nil {
 		return base
 	}
+	base = bodylog.CopyContext(parent, base)
 	if clientRequestID, _ := parent.Value(ctxkey.ClientRequestID).(string); strings.TrimSpace(clientRequestID) != "" {
 		base = context.WithValue(base, ctxkey.ClientRequestID, strings.TrimSpace(clientRequestID))
 	}
@@ -4055,7 +4057,7 @@ func writeContentModerationWSError(ctx context.Context, conn *coderws.Conn, deci
 	}
 	writeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	_ = conn.Write(writeCtx, coderws.MessageText, payload)
+	_ = bodylog.WriteWS(writeCtx, conn, coderws.MessageText, payload)
 }
 
 // writeCyberSessionBlockedWSError sends an error frame telling the client this
@@ -4081,7 +4083,7 @@ func writeCyberSessionBlockedWSError(ctx context.Context, conn *coderws.Conn) {
 	}
 	writeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	_ = conn.Write(writeCtx, coderws.MessageText, payload)
+	_ = bodylog.WriteWS(writeCtx, conn, coderws.MessageText, payload)
 }
 
 // cyberPolicyRecordedKey guards against double-firing recordCyberPolicyIfMarked

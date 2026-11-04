@@ -140,6 +140,9 @@ docs/*
 !docs/ADMIN_PAYMENT_INTEGRATION_API.md
 !docs/ASYNC_IMAGE_TASKS.md
 !docs/BATCH_IMAGE_MVP.md
+!docs/GATEWAY_BODY_LOG.md
+!docs/GATEWAY_BODY_LOG_VALIDATION.md
+!docs/GATEWAY_BODY_LOG_INTEGRATION_REVIEW.md
 !docs/COMPOSITE_GROUPS.md
 !docs/PLUGIN_DEVELOPMENT.md
 !docs/channel-monitor-v2-safe-defaults.md

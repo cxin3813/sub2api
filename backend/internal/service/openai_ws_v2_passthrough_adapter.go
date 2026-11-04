@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/bodylog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -651,7 +652,7 @@ func (c *openAIWSClientFrameConn) WriteFrame(ctx context.Context, msgType coderw
 			payload = c.restoreToolNames(payload)
 		}
 	}
-	return c.conn.Write(ctx, msgType, payload)
+	return bodylog.WriteWS(bodylog.CopyContext(c.controlCtx, ctx), c.conn, msgType, payload)
 }
 
 func (c *openAIWSClientFrameConn) Close() error {
@@ -785,7 +786,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		eventBytes := buildOpenAIFastPolicyBlockedWSEvent(blocked)
 		if eventBytes != nil {
 			writeCtx, cancelWrite := context.WithTimeout(ctx, s.openAIWSWriteTimeout())
-			_ = clientConn.Write(writeCtx, coderws.MessageText, eventBytes)
+			_ = bodylog.WriteWS(bodylog.CopyContext(ctx, writeCtx), clientConn, coderws.MessageText, eventBytes)
 			cancelWrite()
 		}
 		return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, blocked.Message, blocked)
@@ -870,17 +871,21 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	var upstreamConn openAIWSClientConn
 	statusCode := 0
 	var handshakeHeaders http.Header
+	var bodyLogScope context.Context
+	var bodyLogAttempt *bodylog.Session
 	for {
 		headers, err = s.refreshOpenAIAgentIdentityHeaders(ctx, account, headers)
 		if err != nil {
 			return fmt.Errorf("refresh ws authentication headers: %w", err)
 		}
 		dialCtx, cancelDial := context.WithTimeout(ctx, s.openAIWSDialTimeout())
+		bodyLogScope, bodyLogAttempt = bodylog.StartChild(ctx, "upstream_ws", "WS", wsURL, account.ID)
 		upstreamConn, statusCode, handshakeHeaders, err = dialer.Dial(dialCtx, wsURL, headers, proxyURL)
 		cancelDial()
 		if err == nil {
 			break
 		}
+		bodyLogAttempt.End(statusCode, err)
 		var handshakeErr *openAIWSHandshakeError
 		responseBody := []byte(nil)
 		if errors.As(err, &handshakeErr) && handshakeErr != nil {
@@ -907,6 +912,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		}
 		return s.mapOpenAIWSPassthroughDialError(err, statusCode, handshakeHeaders)
 	}
+	defer bodyLogAttempt.End(http.StatusSwitchingProtocols, nil)
 	defer func() {
 		_ = upstreamConn.Close()
 	}()
@@ -920,6 +926,9 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	upstreamFrameConn, ok := upstreamConn.(openaiwsv2.FrameConn)
 	if !ok {
 		return errors.New("openai ws passthrough upstream connection does not support frame relay")
+	}
+	if bodyLogAttempt != nil {
+		upstreamFrameConn = &bodyLogScopedFrames{FrameConn: upstreamFrameConn, scope: bodyLogScope}
 	}
 	relayUpstreamFrameConn := &openAIWSPassthroughFirstOutputFrameConn{
 		inner:             upstreamFrameConn,
@@ -1130,7 +1139,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				return
 			}
 			writeCtx, cancel := context.WithTimeout(ctx, s.openAIWSWriteTimeout())
-			_ = clientConn.Write(writeCtx, coderws.MessageText, eventBytes)
+			_ = bodylog.WriteWS(bodylog.CopyContext(ctx, writeCtx), clientConn, coderws.MessageText, eventBytes)
 			cancel()
 		},
 	}

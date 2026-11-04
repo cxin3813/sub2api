@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/bodylog"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -103,12 +104,14 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 	taskCtx, recorder, cancel := newAsyncImageContext(c, body, h.tasks.ExecutionTimeout())
 	task, err := h.tasks.Create(c.Request.Context(), service.ImageTaskOwner{UserID: apiKey.UserID, APIKeyID: apiKey.ID})
 	if err != nil {
+		bodylog.FromContext(taskCtx.Request.Context()).End(0, err)
 		cancel()
 		imageTaskError(c, err)
 		return
 	}
 
 	pollURL := imageTaskPollURL(c.Request.URL.Path, task.ID)
+	bodylog.FromContext(taskCtx.Request.Context()).Update(func(r *bodylog.Record) { r.Metadata["task_id"] = task.ID })
 	c.Header("Cache-Control", "no-store")
 	c.Header("Location", pollURL)
 	c.Header("Retry-After", "3")
@@ -261,6 +264,7 @@ func (h *AsyncImageHandler) failTask(taskID string, statusCode int, taskErr json
 func newAsyncImageContext(c *gin.Context, body []byte, timeoutDuration time.Duration) (*gin.Context, *httptest.ResponseRecorder, context.CancelFunc) {
 	base := context.WithoutCancel(c.Request.Context())
 	executionCtx, cancel := context.WithTimeout(base, timeoutDuration)
+	executionCtx, session := bodylog.StartChild(executionCtx, "async_task", c.Request.Method, c.Request.URL.Path, 0)
 	request := c.Request.Clone(executionCtx)
 	request.Body = io.NopCloser(bytes.NewReader(body))
 	request.GetBody = func() (io.ReadCloser, error) {
@@ -274,7 +278,8 @@ func newAsyncImageContext(c *gin.Context, body []byte, timeoutDuration time.Dura
 	recorderCtx, _ := gin.CreateTestContext(recorder)
 	taskCtx.Writer = recorderCtx.Writer
 	taskCtx.Request = request
-	return taskCtx, recorder, cancel
+	finish := bodylog.ObserveSynthetic(taskCtx, session)
+	return taskCtx, recorder, func() { finish(); cancel() }
 }
 
 func asyncImageRequestStreams(contentType string, body []byte) bool {

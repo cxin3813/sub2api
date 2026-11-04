@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/bodylog"
 	openaiwsv2 "github.com/Wei-Shaw/sub2api/internal/service/openai_ws_v2"
 	coderws "github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
@@ -343,6 +344,7 @@ func (c *coderOpenAIWSClientConn) ReadFrame(ctx context.Context) (coderws.Messag
 	if err != nil {
 		return coderws.MessageText, nil, err
 	}
+	bodylog.ObserveMessage(ctx, "upstream_response", int(msgType), payload)
 	return msgType, payload, nil
 }
 
@@ -353,7 +355,11 @@ func (c *coderOpenAIWSClientConn) WriteFrame(ctx context.Context, msgType coderw
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return c.conn.Write(ctx, msgType, payload)
+	err := c.conn.Write(ctx, msgType, payload)
+	if err == nil {
+		bodylog.ObserveMessage(ctx, "upstream_request", int(msgType), payload)
+	}
+	return err
 }
 
 func (c *coderOpenAIWSClientConn) Ping(ctx context.Context) error {

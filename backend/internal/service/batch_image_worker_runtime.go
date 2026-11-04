@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 
+	"github.com/Wei-Shaw/sub2api/internal/bodylog"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 )
 
@@ -30,6 +31,7 @@ func ProvideBatchImageWorkerRuntime(
 	pricing *BatchImageModelPricingResolver,
 	authCache APIKeyAuthCacheInvalidator,
 	cfg *config.Config,
+	bodyLogs *bodylog.Manager,
 ) *BatchImageWorkerRuntime {
 	processor := &BatchImagePipelineProcessor{
 		ProviderProcessor: &BatchImageProviderProcessor{
@@ -48,7 +50,8 @@ func ProvideBatchImageWorkerRuntime(
 			Config:       cfg,
 		},
 	}
-	runtime := NewBatchImageWorkerRuntime(NewBatchImageWorker(queue, processor, NewBatchImageWorkerOptionsFromConfig(cfg)), cfg)
+	observed := &observedBatchImageProcessor{base: processor, logs: bodyLogs}
+	runtime := NewBatchImageWorkerRuntime(NewBatchImageWorker(queue, observed, NewBatchImageWorkerOptionsFromConfig(cfg)), cfg)
 	runtime.billingRecovery = &BatchImageBillingRecoveryService{
 		Repo:       repo,
 		Billing:    billingRepo,

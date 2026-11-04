@@ -1,0 +1,43 @@
+{
+  "status": 1,
+  "conflict_files": [
+    "backend/cmd/server/VERSION",
+    "backend/internal/handler/gateway_handler_chat_completions.go",
+    "backend/internal/handler/gateway_handler_responses.go",
+    "backend/internal/service/gateway_forward_as_chat_completions.go",
+    "backend/internal/service/gateway_forward_as_responses.go",
+    "backend/internal/service/gateway_service.go",
+    "backend/internal/service/gemini_image_output_accounting.go",
+    "backend/internal/service/openai_gateway_grok.go",
+    "backend/internal/service/openai_gateway_service.go",
+    "backend/internal/service/settings_view.go"
+  ],
+  "date": "2026-11-04",
+  "old_main": "bf07fa5d4",
+  "upstream_base": "4a4a83ee5",
+  "ordinary_merge_preflight_scope": "old main versus pinned upstream before candidate changes",
+  "shared_sql_files": 296,
+  "shared_sql_contents_identical": true,
+  "legacy_bodylog_migrations_identical": true,
+  "new_upstream_migrations": [
+    "246_enable_gemini_image_generation_groups.sql",
+    "247_scoped_admin_api_keys.sql",
+    "248_group_image_count_billing.sql",
+    "249_mcp_oauth.sql"
+  ],
+  "upgrade": {
+    "test": "TestBodyLogUpgradeFromLegacyFork",
+    "legacy_ledger_rows": 298,
+    "upgraded_ledger_rows": 302,
+    "duration_seconds": 1.42,
+    "legacy_bytes_preserved": true,
+    "switches_imported": true,
+    "new_complete_capture_default": true,
+    "new_file_body_restored": true,
+    "repeated_startup": true,
+    "database_scope": "new empty disposable PostgreSQL 16 database"
+  },
+  "integration_performed": false,
+  "commits_created": false,
+  "test_database_container_stopped": true
+}

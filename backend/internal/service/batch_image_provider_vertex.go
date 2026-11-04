@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/bodylog"
 	"io"
 	"net/http"
 	"net/url"
@@ -738,7 +739,7 @@ func NewVertexBatchHTTPClient(baseURL string, client *http.Client) *VertexBatchH
 	if client == nil {
 		client = batchImageDefaultHTTPClient()
 	}
-	return &VertexBatchHTTPClient{baseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"), client: client}
+	return &VertexBatchHTTPClient{baseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"), client: bodylog.ObserveClient(client)}
 }
 
 func (c *VertexBatchHTTPClient) CreateBatchPredictionJob(ctx context.Context, accessToken string, req VertexCreateBatchPredictionJobRequest) (*VertexBatchPredictionJob, error) {
@@ -800,7 +801,7 @@ func NewVertexGCSObjectStore(baseURL string, client *http.Client) *VertexGCSObje
 	if baseURL == "" {
 		baseURL = "https://storage.googleapis.com"
 	}
-	return &VertexGCSObjectStore{baseURL: baseURL, client: client}
+	return &VertexGCSObjectStore{baseURL: baseURL, client: bodylog.ObserveClient(client)}
 }
 
 func (s *VertexGCSObjectStore) UploadJSONL(ctx context.Context, accessToken string, uri string, r io.Reader) error {

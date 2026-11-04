@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/bodylog"
 	coderws "github.com/coder/websocket"
 )
 
@@ -56,6 +57,9 @@ func readOpenAIWSClientMessageWithTimeoutStart(
 	readDone := make(chan openAIWSClientReadResult, 1)
 	go func() {
 		messageType, payload, err := conn.Read(context.Background())
+		if err == nil {
+			bodylog.ObserveMessage(controlCtx, "client_request", int(messageType), payload)
+		}
 		readDone <- openAIWSClientReadResult{messageType: messageType, payload: payload, err: err}
 	}()
 

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/bodylog"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -463,7 +464,7 @@ func NewGeminiBatchHTTPClient(baseURL string, client *http.Client) *GeminiBatchH
 	if client == nil {
 		client = batchImageDefaultHTTPClient()
 	}
-	return &GeminiBatchHTTPClient{baseURL: baseURL, client: client}
+	return &GeminiBatchHTTPClient{baseURL: baseURL, client: bodylog.ObserveClient(client)}
 }
 
 // batchImageDefaultHTTPClient 返回带连接/握手/响应头超时的共享客户端。

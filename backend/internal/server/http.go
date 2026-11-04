@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/bodylog"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/websearch"
@@ -42,12 +43,17 @@ func ProvideRouter(
 	settingService *service.SettingService,
 	compositeResolver *service.CompositeRouteResolver,
 	redisClient *redis.Client,
+	bodyLogs *bodylog.Manager,
 ) *gin.Engine {
 	if cfg.Server.Mode == "release" {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
 	r := gin.New()
+	gatewayRoutes := bodylog.NewGatewayRoutes()
+	if bodyLogs != nil {
+		r.Use(bodyLogs.Gateway(gatewayRoutes, enrichBodyLog))
+	}
 	r.Use(middleware2.Recovery())
 	configureTrustedProxies(r, cfg.Server)
 
@@ -87,7 +93,7 @@ func ProvideRouter(
 		service.SetWebSearchManager(websearch.NewManager(configs, redisClient))
 	})
 
-	return SetupRouter(r, handlers, jwtAuth, optionalJWTAuth, adminAuth, apiKeyAuth, auditLog, stepUpAuth, apiKeyService, subscriptionService, opsService, settingService, compositeResolver, cfg, redisClient)
+	return SetupRouter(r, handlers, jwtAuth, optionalJWTAuth, adminAuth, apiKeyAuth, auditLog, stepUpAuth, apiKeyService, subscriptionService, opsService, settingService, compositeResolver, cfg, redisClient, bodylog.RouterOptions{Manager: bodyLogs, Routes: gatewayRoutes})
 }
 
 func configureTrustedProxies(r *gin.Engine, cfg config.ServerConfig) {

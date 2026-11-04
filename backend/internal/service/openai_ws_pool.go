@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/bodylog"
 	"math"
 	"net/http"
 	"sort"
@@ -94,6 +95,8 @@ type openAIWSHandshakeCompatibilityKey struct {
 }
 
 type openAIWSConnLease struct {
+	logContext context.Context
+	logSession *bodylog.Session
 	pool       *openAIWSConnPool
 	accountID  int64
 	conn       *openAIWSConn
@@ -199,7 +202,11 @@ func (l *openAIWSConnLease) WriteJSON(value any, timeout time.Duration) error {
 	if err != nil {
 		return err
 	}
-	return conn.writeJSONWithTimeout(context.Background(), value, timeout)
+	err = conn.writeJSONWithTimeout(context.Background(), value, timeout)
+	if err == nil {
+		bodylog.ObserveJSON(l.logContext, "upstream_request", value)
+	}
+	return err
 }
 
 func (l *openAIWSConnLease) WriteJSONWithContextTimeout(ctx context.Context, value any, timeout time.Duration) error {
@@ -207,7 +214,11 @@ func (l *openAIWSConnLease) WriteJSONWithContextTimeout(ctx context.Context, val
 	if err != nil {
 		return err
 	}
-	return conn.writeJSONWithTimeout(ctx, value, timeout)
+	err = conn.writeJSONWithTimeout(ctx, value, timeout)
+	if err == nil {
+		bodylog.ObserveJSON(l.logContext, "upstream_request", value)
+	}
+	return err
 }
 
 func (l *openAIWSConnLease) WriteJSONContext(ctx context.Context, value any) error {
@@ -215,7 +226,11 @@ func (l *openAIWSConnLease) WriteJSONContext(ctx context.Context, value any) err
 	if err != nil {
 		return err
 	}
-	return conn.writeJSON(value, ctx)
+	err = conn.writeJSON(value, ctx)
+	if err == nil {
+		bodylog.ObserveJSON(l.logContext, "upstream_request", value)
+	}
+	return err
 }
 
 func (l *openAIWSConnLease) ReadMessage(timeout time.Duration) ([]byte, error) {
@@ -223,7 +238,11 @@ func (l *openAIWSConnLease) ReadMessage(timeout time.Duration) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return conn.readMessageWithTimeout(timeout)
+	payload, err := conn.readMessageWithTimeout(timeout)
+	if err == nil {
+		bodylog.ObserveMessage(l.logContext, "upstream_response", 1, payload)
+	}
+	return payload, err
 }
 
 func (l *openAIWSConnLease) ReadMessageContext(ctx context.Context) ([]byte, error) {
@@ -231,7 +250,11 @@ func (l *openAIWSConnLease) ReadMessageContext(ctx context.Context) ([]byte, err
 	if err != nil {
 		return nil, err
 	}
-	return conn.readMessage(ctx)
+	payload, err := conn.readMessage(ctx)
+	if err == nil {
+		bodylog.ObserveMessage(l.logContext, "upstream_response", 1, payload)
+	}
+	return payload, err
 }
 
 func (l *openAIWSConnLease) ReadMessageWithContextTimeout(ctx context.Context, timeout time.Duration) ([]byte, error) {
@@ -239,7 +262,11 @@ func (l *openAIWSConnLease) ReadMessageWithContextTimeout(ctx context.Context, t
 	if err != nil {
 		return nil, err
 	}
-	return conn.readMessageWithContextTimeout(ctx, timeout)
+	payload, err := conn.readMessageWithContextTimeout(ctx, timeout)
+	if err == nil {
+		bodylog.ObserveMessage(l.logContext, "upstream_response", 1, payload)
+	}
+	return payload, err
 }
 
 func (l *openAIWSConnLease) PingWithTimeout(timeout time.Duration) error {
@@ -272,6 +299,7 @@ func (l *openAIWSConnLease) Release() {
 	if !l.released.CompareAndSwap(false, true) {
 		return
 	}
+	l.logSession.End(http.StatusSwitchingProtocols, nil)
 	l.conn.release()
 	if l.pool != nil {
 		l.pool.notifyAccountPoolChanged(l.accountID)
@@ -1128,6 +1156,7 @@ func (p *openAIWSConnPool) Acquire(ctx context.Context, req openAIWSAcquireReque
 		now := time.Now()
 		lease.idleBefore = lease.conn.idleDuration(now)
 		lease.ageBefore = lease.conn.age(now)
+		lease.logContext, lease.logSession = bodylog.StartChild(ctx, "upstream_ws", "WS", req.WSURL, lease.accountID)
 	}
 	return lease, err
 }

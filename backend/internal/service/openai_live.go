@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/bodylog"
 	"io"
 	"net/http"
 	"net/url"
@@ -236,6 +237,7 @@ func (s *OpenAIGatewayService) CreateLiveCall(
 			return nil, fmt.Errorf("save live call mapping: %w", saveErr)
 		}
 		created.Account = account
+		bodylog.FromContext(ctx).BindTask(ctx, "live", record.CallHash)
 		go s.observeLiveCall(record)
 		return created, nil
 	}
@@ -451,14 +453,20 @@ func (s *OpenAIGatewayService) dialLiveSideband(ctx context.Context, record *Liv
 		return nil, err
 	}
 	target := strings.TrimRight(chatGPTLiveSidebandBaseURL, "/") + "/" + url.PathEscape(record.CallID)
+	logContext, capture := bodylog.StartChild(ctx, "upstream_ws", "WS", target, account.ID)
 	conn, status, _, err := s.getOpenAIWSPassthroughDialer().Dial(ctx, target, headers, resolveAccountProxyURL(account))
 	if err != nil {
+		capture.End(status, err)
 		return nil, fmt.Errorf("dial live sideband (status %d): %w", status, err)
 	}
 	raw, ok := conn.(liveFrameConn)
 	if !ok {
 		_ = conn.Close()
+		capture.End(status, errors.New("raw frame relay unavailable"))
 		return nil, errors.New("live sideband transport does not support raw frames")
+	}
+	if capture != nil {
+		return &bodyLogScopedFrames{FrameConn: raw, scope: logContext, session: capture}, nil
 	}
 	return raw, nil
 }
@@ -527,6 +535,9 @@ func (s *OpenAIGatewayService) ProxyLiveSideband(
 	go func() {
 		for {
 			messageType, payload, readErr := downstream.Read(proxyCtx)
+			if readErr == nil {
+				bodylog.ObserveMessage(proxyCtx, "client_request", int(messageType), payload)
+			}
 			if readErr != nil {
 				errCh <- readErr
 				return
@@ -544,7 +555,7 @@ func (s *OpenAIGatewayService) ProxyLiveSideband(
 				errCh <- liveSidebandReadError(readErr)
 				return
 			}
-			if writeErr := downstream.Write(proxyCtx, messageType, payload); writeErr != nil {
+			if writeErr := bodylog.WriteWS(proxyCtx, downstream, messageType, payload); writeErr != nil {
 				errCh <- writeErr
 				return
 			}
@@ -680,8 +691,10 @@ func (s *OpenAIGatewayService) observeLiveCall(record *LiveCallRecord) {
 }
 
 func (s *OpenAIGatewayService) runLiveObserverConnection(record *LiveCallRecord, upstream liveFrameConn) error {
-	ctx, cancel := context.WithCancel(context.Background())
+	base, capture := s.liveBodyLogContext(context.Background(), record)
+	ctx, cancel := context.WithCancel(base)
 	defer cancel()
+	defer capture.End(0, nil)
 	frameCh := make(chan []byte, 1)
 	errCh := make(chan error, 1)
 	go func() {
@@ -732,7 +745,7 @@ func (s *OpenAIGatewayService) runLiveObserverConnection(record *LiveCallRecord,
 				return ErrLiveUnavailable
 			}
 		case <-maxTimer.C:
-			closeCtx, closeCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			closeCtx, closeCancel := context.WithTimeout(bodylog.CopyContext(ctx, context.Background()), 2*time.Second)
 			_ = upstream.WriteFrame(closeCtx, coderws.MessageText, []byte(`{"type":"session.close"}`))
 			closeCancel()
 			return context.DeadlineExceeded
@@ -832,7 +845,9 @@ func (s *OpenAIGatewayService) finalizeLiveCall(record *LiveCallRecord) {
 	//
 	// 这是该会话唯一一次落库机会（MarkLiveCallClosed 已标记 first），失败即永久
 	// 丢失，因此走带日志与同步兜底的 writeUsageLogBestEffort（issue #3656）。
-	writeUsageLogBestEffort(context.Background(), s.usageLogRepo, &UsageLog{
+	usageCtx, capture := s.liveBodyLogContext(context.Background(), record)
+	defer capture.End(0, nil)
+	writeUsageLogBestEffort(usageCtx, s.usageLogRepo, &UsageLog{
 		UserID:           record.UserID,
 		APIKeyID:         record.APIKeyID,
 		AccountID:        record.AccountID,
