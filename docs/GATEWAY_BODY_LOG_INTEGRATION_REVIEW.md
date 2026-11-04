@@ -6,8 +6,28 @@ An ordinary merge from the old fork would retain retired custom behavior.
 
 The reviewed refs are local `main` / `origin/main` at `bf07fa5d4` and
 `upstream/main` / `codex/bodylog-v2` base at `4a4a83ee5` (0.2.19).
-This review does not advance the upstream baseline. The candidate's implementation
-and acceptance changes are still uncommitted.
+This review does not advance the upstream baseline. At review time, the
+candidate's implementation and acceptance changes were uncommitted.
+
+## Local integration completed
+
+The user authorized local commits and the main transition after this review.
+Implementation commit `8c68acbeb` contains the accepted candidate. Reconciliation
+commit `7d9855e7b` records old main as its second parent using the `ours` strategy.
+Its tree is identical to the implementation commit's tree, and both old main
+and the pinned upstream base are ancestors.
+
+Local `main` now contains the reconciliation and this delivery record. The
+current Body Log worktree uses `main`; the original source directory uses
+`codex/preserve-main-before-bodylog-v2` at `bf07fa5d4`. Its tracked changes,
+index changes and untracked file contents were compared before and after the
+transition and retained unchanged.
+
+The prior application, browser, performance and upgrade evidence applies because
+reconciliation changed history without changing application files. This delivery
+record changes documentation and acceptance metadata only.
+
+No push or production deployment was performed.
 
 ## The candidate contains Body Log and its integration points
 
@@ -108,10 +128,9 @@ The two modal changes are a non-Body-Log customization. Their omission follows
 the user's decision to retain only Body Log. They remain available for later
 review rather than being deleted or silently committed.
 
-## Recommended integration sequence
+## Executed integration sequence
 
-This sequence requires authorization to create commits and advance `main`.
-The review itself has not performed those steps.
+The following sequence was approved by the user and completed locally.
 
 1. Commit the accepted candidate on `codex/bodylog-v2`, including the upgrade
    test and review artifacts.

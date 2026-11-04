@@ -37,7 +37,16 @@
     "repeated_startup": true,
     "database_scope": "new empty disposable PostgreSQL 16 database"
   },
-  "integration_performed": false,
-  "commits_created": false,
-  "test_database_container_stopped": true
+  "integration_performed": true,
+  "commits_created": true,
+  "test_database_container_stopped": true,
+  "implementation_commit": "8c68acbeb",
+  "reconciliation_commit": "7d9855e7b",
+  "reconciliation_tree_matches_implementation": true,
+  "old_main_and_upstream_are_ancestors": true,
+  "original_worktree_changes_preserved": true,
+  "preservation_branch": "codex/preserve-main-before-bodylog-v2",
+  "current_worktree_branch": "main",
+  "pushed": false,
+  "deployed": false
 }
