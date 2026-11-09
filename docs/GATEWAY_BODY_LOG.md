@@ -245,3 +245,31 @@ replay verified root-list display, error feedback, refreshed raw content and
 390px layout without overflow or page errors. Production was not modified.
 Capacity forecasting and historical metadata backfill are not included in this
 patch; retention remains an age ceiling constrained by the file budget.
+
+## Upstream 0.2.20 integration (2026-11-09)
+
+Merged release tag `v0.2.20` (`dab829a4e`) and aligned VERSION with upstream's
+follow-up 0.2.20 correction. The two conflict sites were generated Wire wiring
+and asynchronous image-task context creation. Wire was regenerated to retain
+both upstream lifecycle services and Body Log shutdown.
+
+Async tasks retain the upstream detached ingress-memory reservation, error
+return and concrete preread body. The log observer records that already-read
+synthetic snapshot without wrapping away the preread zero-copy fast path.
+A regression uses a budget equal to exactly one input body and verifies parent
+association, readable input, completion and full reservation release.
+
+Validation: frontend full run passed 3,095 of 3,097 tests; its two failures came
+from the reasoning-effort integration fixture missing a RouterLink mock. After
+adding a local component stub, all three tests in that file passed. The other
+385 files' results remain applicable. TypeScript and frontend production build
+passed. Body Log and async image compatibility race tests passed. Embedded
+backend build succeeded and its binary reports 0.2.20.
+
+The backend unit run excluded the known external Aliyun CAPTCHA cases. All
+completed packages passed except one service assertion waiting one second for
+content-moderation snapshot refresh. Five isolated repetitions of that same
+test passed (0.034 seconds total), consistent with a scheduling-sensitive
+timeout under concurrent builds; its implementation and assertion were not
+changed. This is not recorded as an entirely green full-suite run.
+No production container or database was upgraded in this sync.

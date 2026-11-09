@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/gin-gonic/gin"
 )
 
@@ -183,7 +184,14 @@ func ObserveSynthetic(c *gin.Context, s *Session) func() {
 	}
 	original := c.Writer
 	input := s.Body("client_request", c.GetHeader("Content-Type"), c.GetHeader("Content-Encoding"), c.Request.Header)
-	c.Request.Body = ObserveReader(c.Request.Body, input, nil)
+	if preread, ok := c.Request.Body.(*pkghttputil.PrereadBody); ok {
+		// The synthetic task replays an already-consumed ingress snapshot. Keep
+		// the concrete preread body so the upstream zero-copy/budget path survives.
+		_, _ = input.Write(preread.Bytes())
+		input.Finish(true)
+	} else {
+		c.Request.Body = ObserveReader(c.Request.Body, input, nil)
+	}
 	output := s.Body("client_response", "", "", nil)
 	c.Writer = &captureWriter{ResponseWriter: original, sink: output}
 	return func() {
