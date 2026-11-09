@@ -35,7 +35,7 @@ describe('Body log configuration', () => {
     expect(wrapper.text()).toContain(messages.settingsLoading)
     resolveSettings({ config: { ...original, retention_days: 9 }, stats: { used_bytes: 0, failure_count: 0, last_error: '' } })
     await flushPromises()
-    const retention = wrapper.findAll('input[type="number"]')[3]
+    const retention = wrapper.findAll('input[type="number"]')[4]
     expect((retention.element as HTMLInputElement).value).toBe('9')
     await retention.setValue(8)
     await wrapper.findAll('form')[1].trigger('submit')
@@ -51,12 +51,13 @@ describe('Body log configuration', () => {
       }
     })
     await flushPromises()
+    expect(list).toHaveBeenCalledWith(expect.objectContaining({ roots_only: 'true' }))
     await wrapper.findAll('button').find(button => button.text() === 'Capture settings')!.trigger('click')
     await flushPromises()
     const numbers = wrapper.findAll('input[type="number"]')
-    // Three list filters precede the retention, budget and capture-limit inputs.
-    await numbers[3].setValue(3)
-    await numbers[4].setValue(5)
+    // Four numeric list filters precede the policy inputs.
+    await numbers[4].setValue(3)
+    await numbers[5].setValue(5)
     expect(wrapper.text()).toContain('Reducing age or capacity limits can remove existing new logs')
     await wrapper.findAll('form')[1].trigger('submit')
     await flushPromises()

@@ -92,4 +92,22 @@ describe('Body log reading', () => {
     expect(wrapper.text()).toContain('first page')
     expect(wrapper.text()).not.toContain('second page')
   })
+  it('refreshes the current raw page when the same record is reloaded', async () => {
+    raw.mockResolvedValue({ content: 'old body', next_offset: 65536, has_more: true })
+    const record = { id: 'request', kind: 'gateway_http', method: 'POST', path: '/v1/responses', status: 200, created_at: '2026-11-03T00:00:00Z', state: 'closed', persistence: 'durable_local', bodies: [body] }
+    const wrapper = mount(BodyLogDetail, { props: { record }, global: { plugins: plugins(), stubs: { BodyLogContent: true } } })
+    await wrapper.findAll('button').find(button => button.text() === 'Original bodies')!.trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === 'Load more')!.trigger('click')
+    await flushPromises()
+    raw.mockResolvedValue({ content: 'updated body', next_offset: 131072, has_more: false })
+    await wrapper.setProps({ record: { ...record, revision: 2 } })
+    await flushPromises()
+    expect(raw).toHaveBeenLastCalledWith('request', 'body-1', 65536)
+    expect(wrapper.text()).toContain('updated body')
+    await wrapper.findAll('button').find(button => button.text() === 'Previous page')!.trigger('click')
+    await flushPromises()
+    expect(raw).toHaveBeenLastCalledWith('request', 'body-1', 0)
+  })
+
 })

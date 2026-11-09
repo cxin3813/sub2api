@@ -24,6 +24,7 @@ export interface BodyLogBody {
 }
 
 export interface BodyLogRecord {
+ revision?: number
   id: string
   parent_id?: string
   kind: string
@@ -65,6 +66,8 @@ export interface BodyLogItem {
 
 export interface BodyLogParsed {
   parser_version: number
+ protocol_state?: string
+ capture_state?: string
   protocol: string
   state: string
   reason?: string

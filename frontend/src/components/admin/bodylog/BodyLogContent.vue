@@ -8,9 +8,10 @@
     <template v-else>
       <div class="mb-4 flex flex-wrap items-center gap-2 text-xs text-gray-500">
         <span class="font-medium">{{ t('bodyLogs.protocol') }}: {{ protocol || t('bodyLogs.unknown') }}</span>
+        <span v-if="protocolState !== 'not_applicable' && protocolState" class="text-gray-500">{{ t('bodyLogs.' + protocolState) }}</span>
         <span>·</span>
         <span :class="state !== 'ready' ? 'text-amber-600' : ''">{{ stateLabel }}</span>
-        <span v-if="body.state !== 'complete' && body.state !== 'empty'" class="text-amber-600">{{ statusLabel(body.state) }}</span>
+        <span v-if="body.state !== 'complete' && body.state !== 'empty'" class="text-amber-600">{{ body.state === 'partial' ? t('bodyLogs.noEOF') : statusLabel(body.state) }}</span>
         <button class="ml-auto text-primary-600 hover:underline" type="button" @click="emit('original', body.id)">{{ t('bodyLogs.original') }}</button>
       </div>
       <details v-if="Object.keys(parameters).length" class="mb-4 rounded-lg bg-gray-50 p-3 dark:bg-dark-950">
@@ -22,6 +23,10 @@
           </div>
         </dl>
       </details>
+      <div v-if="visibleItems.length" class="mb-3 flex flex-wrap gap-3 text-xs">
+        <button type="button" class="text-primary-600" @click="jumpLatest">{{ t('bodyLogs.latestMessage') }}</button>
+        <button v-for="role in ['user', 'assistant', 'tool']" :key="role" type="button" class="text-gray-500" @click="jumpRole(role)">{{ statusLabel(role) }}</button>
+      </div>
       <div v-if="!visibleItems.length" class="py-10 text-sm text-gray-400">{{ t('bodyLogs.noItems') }}</div>
       <div v-else ref="scrollElement" class="max-h-[65vh] overflow-auto pr-2">
         <div :style="virtual ? { height: `${virtualizer.getTotalSize()}px`, position: 'relative', width: '100%' } : undefined">
@@ -30,14 +35,19 @@
             :data-index="row.index"
             :style="row.virtual ? { position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${row.start}px)` } : undefined"
           >
-            <BodyLogMessage :item="row.item" :id-prefix="body.id" :result="findResult(row.item)" @result="goToResult" />
+            <details v-if="row.item.history || (row.item.kind === 'tool_result' && (row.item.text?.length || 0) > 4096)" :id="'bodylog-collapsed-' + body.id + '-' + encodeURIComponent(row.item.id)">
+              <summary class="cursor-pointer py-3 text-sm text-gray-500">{{ statusLabel(row.item.role) }} · {{ row.item.name || statusLabel(row.item.kind) }}</summary>
+              <BodyLogMessage :item="row.item" :id-prefix="body.id" :result="findResult(row.item)" @result="goToResult" />
+            </details>
+            <BodyLogMessage v-else :item="row.item" :id-prefix="body.id" :result="findResult(row.item)" @result="goToResult" />
           </div>
         </div>
       </div>
       <button v-if="hasMore" class="btn btn-secondary mt-4 w-full" :disabled="loading" type="button" @click="load(true)">
         {{ loading ? t('bodyLogs.loading') : t('bodyLogs.more') }}
       </button>
-      <p v-if="hasMore || parseReason" class="mt-3 text-xs text-gray-400">{{ t('bodyLogs.preview') }}</p>
+      <p v-if="parseReason" class="mt-3 text-xs text-amber-600">{{ reasonLabel }}</p>
+      <p v-if="hasMore" class="mt-3 text-xs text-gray-400">{{ t('bodyLogs.preview') }}</p>
     </template>
   </section>
 </template>
@@ -56,6 +66,8 @@ const items = ref<BodyLogItem[]>([])
 const parameters = ref<Record<string, unknown>>({})
 const state = ref('pending')
 const protocol = ref('')
+const protocolState = ref('')
+const reasonLabel = computed(() => { const key = 'bodyLogs.reason_' + parseReason.value.split(';')[0]; return te(key) ? t(key) : parseReason.value })
 const parseReason = ref('')
 const cursor = ref(0)
 const hasMore = ref(false)
@@ -90,12 +102,22 @@ function findResult(item: BodyLogItem) {
   const matches = items.value.filter(candidate => candidate.kind === 'tool_result' && candidate.call_id === item.call_id)
   return matches.length === 1 ? matches[0] : undefined
 }
+function jumpRole(role: string) {
+  const target = [...visibleItems.value].reverse().find(item => item.role === role)
+  if (target) void goToResult(target)
+}
+function jumpLatest() {
+  const target = [...visibleItems.value].reverse().find(item => item.kind === 'message') || visibleItems.value.at(-1)
+  if (target) void goToResult(target)
+}
 async function goToResult(item: BodyLogItem) {
   const index = visibleItems.value.findIndex(candidate => candidate.id === item.id)
   if (index >= 0 && virtual.value) {
     virtualizer.value.scrollToIndex(index, { align: 'start' })
     await nextTick()
   }
+  const collapsed = document.getElementById(`bodylog-collapsed-${props.body.id}-${encodeURIComponent(item.id)}`)
+  if (collapsed instanceof HTMLDetailsElement) collapsed.open = true
   document.getElementById(`bodylog-item-${props.body.id}-${encodeURIComponent(item.id)}`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
 }
 async function load(append: boolean) {
@@ -106,7 +128,7 @@ async function load(append: boolean) {
     if (current !== generation) return
     items.value = append ? [...items.value, ...parsed.items] : parsed.items
     parameters.value = parsed.parameters; state.value = parsed.state
-    protocol.value = parsed.protocol; parseReason.value = parsed.reason || ''
+    protocolState.value = parsed.protocol_state || ""; protocol.value = parsed.protocol; parseReason.value = parsed.reason || ''
     cursor.value = parsed.next_cursor; hasMore.value = parsed.has_more
   } catch {
     if (current === generation) error.value = true

@@ -169,3 +169,17 @@ func TestInterruptedStreamHasPartialSemanticState(t *testing.T) {
 		t.Fatalf("incomplete generation was presented as complete: %+v %v", parsed, err)
 	}
 }
+
+func TestProtocolCompletionIndependentOfCaptureEOF(t *testing.T) {
+	m := testManager(t, nil)
+	session := m.Begin(nil, "gateway_http", "POST", "/v1/chat/completions")
+	sink := session.Body("client_response", "text/event-stream", "", nil)
+	_, _ = sink.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n"))
+	sink.Finish(false)
+	session.End(200, context.Canceled)
+	row := session.Snapshot()
+	parsed, err := m.Parse(t.Context(), row, row.Bodies[0].ID, 0, 50)
+	if err != nil || parsed.ProtocolState != "completed" || parsed.CaptureState != "partial" || parsed.State != "ready" {
+		t.Fatalf("completion evidence conflated: %+v %v", parsed, err)
+	}
+}

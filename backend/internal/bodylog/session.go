@@ -55,6 +55,7 @@ func (m *Manager) Begin(parent *Session, kind, method, path string) *Session {
 	if parent != nil {
 		pr := parent.Snapshot()
 		r.ParentID, r.UserID, r.APIKeyID, r.GroupID = pr.ID, pr.UserID, pr.APIKeyID, pr.GroupID
+		r.Platform = pr.Platform
 	}
 	s := &Session{manager: m, record: r, config: cfg}
 	m.mu.Lock()
@@ -89,7 +90,10 @@ func (s *Session) Update(fn func(*Record)) {
 	s.mu.Unlock()
 }
 
-func (s *Session) AddUsage(id int64) {
+func (s *Session) AddUsage(id int64) { s.LinkUsage(id, nil) }
+
+// LinkUsage persists late metadata together with its usage association.
+func (s *Session) LinkUsage(id int64, enrich func(*Record)) {
 	if s == nil || id <= 0 {
 		return
 	}
@@ -100,6 +104,12 @@ func (s *Session) AddUsage(id int64) {
 	ended := s.finalized
 	s.mu.Unlock()
 	add := func(r *Record) {
+		if enrich != nil {
+			if r.Metadata == nil {
+				r.Metadata = map[string]any{}
+			}
+			enrich(r)
+		}
 		for _, existing := range r.UsageIDs {
 			if existing == id {
 				return

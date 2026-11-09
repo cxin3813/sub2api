@@ -31,14 +31,16 @@ type Item struct {
 }
 
 type Parsed struct {
-	Version    int            `json:"parser_version"`
-	Protocol   string         `json:"protocol"`
-	State      string         `json:"state"`
-	Reason     string         `json:"reason,omitempty"`
-	Parameters map[string]any `json:"parameters"`
-	Items      []Item         `json:"items"`
-	Next       int            `json:"next_cursor"`
-	HasMore    bool           `json:"has_more"`
+	Version       int            `json:"parser_version"`
+	Protocol      string         `json:"protocol"`
+	State         string         `json:"state"`
+	ProtocolState string         `json:"protocol_state"`
+	CaptureState  string         `json:"capture_state"`
+	Reason        string         `json:"reason,omitempty"`
+	Parameters    map[string]any `json:"parameters"`
+	Items         []Item         `json:"items"`
+	Next          int            `json:"next_cursor"`
+	HasMore       bool           `json:"has_more"`
 }
 
 type parser struct {
@@ -66,6 +68,16 @@ func (m *Manager) Parse(ctx context.Context, r Record, bodyID string, cursor, li
 			b = candidate
 		}
 	}
+	result.CaptureState = b.State
+	result.ProtocolState = "not_applicable"
+	if p.stream && !p.input {
+		result.ProtocolState = "missing_terminal"
+		for key := range p.parameters {
+			if key == "stream_terminal" || key == "finish_reason" || strings.HasSuffix(key, "_finish_reason") {
+				result.ProtocolState = "completed"
+			}
+		}
+	}
 	if b.Saved > parseBudget {
 		result.State, result.Reason = "partial", "parse_budget_exceeded; complete saved content remains available"
 	}
@@ -82,7 +94,7 @@ func (m *Manager) Parse(ctx context.Context, r Record, bodyID string, cursor, li
 			result.State, result.Reason = "partial", "missing_stream_terminal_event"
 		}
 	}
-	if b.State != "complete" && b.State != "empty" {
+	if b.State != "complete" && b.State != "empty" && b.State != "partial" {
 		result.State, result.Reason = "partial", b.State
 	}
 	if len(p.items) == 0 && b.Saved > 0 {

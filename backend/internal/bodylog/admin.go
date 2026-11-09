@@ -75,6 +75,14 @@ func (m *Manager) RegisterAdmin(admin *gin.RouterGroup) {
 	})
 	g.GET("", func(c *gin.Context) {
 		f := Filter{Limit: 50}
+		f.RootsOnly = c.Query("roots_only") == "true"
+		f.Model = c.Query("model")
+		f.AccountID, _ = strconv.ParseInt(c.Query("account_id"), 10, 64)
+		f.Platform = c.Query("platform")
+		f.Kind = c.Query("kind")
+		f.RequestID = c.Query("request_id")
+		f.After, _ = time.Parse(time.RFC3339, c.Query("after"))
+		f.Until, _ = time.Parse(time.RFC3339, c.Query("until"))
 		f.UserID, _ = strconv.ParseInt(c.Query("user_id"), 10, 64)
 		f.APIKeyID, _ = strconv.ParseInt(c.Query("api_key_id"), 10, 64)
 		f.UsageID, _ = strconv.ParseInt(c.Query("usage_log_id"), 10, 64)

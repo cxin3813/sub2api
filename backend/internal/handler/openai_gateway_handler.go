@@ -2497,6 +2497,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "websocket ingress capacity lease lost; please reconnect")
 			return
 		}
+		bodylog.FromContext(ctx).Update(func(r *bodylog.Record) { r.Metadata["ws_first_message_error"] = err.Error() })
 		closeStatus, closeReason := summarizeWSCloseErrorForLog(err)
 		reqLog.Warn("openai.websocket_read_first_message_failed",
 			zap.Error(err),

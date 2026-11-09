@@ -25,7 +25,7 @@
         <button type="button" class="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-primary-600" @click="back"><span aria-hidden="true">←</span>{{ t('bodyLogs.back') }}</button>
         <div class="flex flex-wrap items-center gap-2">
           <span class="mr-1 text-xs text-gray-400">{{ t('bodyLogs.attempts') }}</span>
-          <button v-for="entry in family" :key="entry.id" type="button" class="rounded-lg border px-3 py-1.5 text-xs" :class="selected.id === entry.id ? 'border-primary-300 bg-primary-50 text-primary-700 dark:border-primary-800 dark:bg-primary-950/30 dark:text-primary-300' : 'border-gray-200 text-gray-500 dark:border-dark-700'" @click="select(entry)">{{ entry.kind === 'gateway_http' ? t('bodyLogs.client') : `${entry.method} ${entry.account_id ? '#' + entry.account_id : ''}` }} · {{ entry.status || state(entry.state) }}</button>
+          <button v-for="entry in family" :key="entry.id" type="button" class="rounded-lg border px-3 py-1.5 text-xs" :class="selected.id === entry.id ? 'border-primary-300 bg-primary-50 text-primary-700 dark:border-primary-800 dark:bg-primary-950/30 dark:text-primary-300' : 'border-gray-200 text-gray-500 dark:border-dark-700'" @click="select(entry)">{{ entry.kind === 'gateway_http' ? t('bodyLogs.client') : `${entry.method} ${entry.account_id ? '#' + entry.account_id : ''}` }} · {{ entry.status || (entry.error === "context canceled" ? t("bodyLogs.connectionClosed") : state(entry.state)) }}</button>
         </div>
         <div class="card p-5 md:p-7"><BodyLogDetail :record="selected" /></div>
       </div>
@@ -38,6 +38,13 @@
           <label class="text-xs text-gray-500">{{ t('bodyLogs.userFilter') }}<input v-model="filters.user" type="number" min="1" class="input mt-1 w-36" /></label>
           <label class="text-xs text-gray-500">{{ t('bodyLogs.keyFilter') }}<input v-model="filters.key" type="number" min="1" class="input mt-1 w-36" /></label>
           <label class="text-xs text-gray-500">{{ t('bodyLogs.statusFilter') }}<input v-model="filters.status" type="number" min="100" max="599" class="input mt-1 w-36" /></label>
+          <label class="text-xs text-gray-500">{{ t('bodyLogs.requestId') }}<input v-model="filters.request" class="input mt-1 w-48" /></label>
+          <label class="text-xs text-gray-500">{{ t('bodyLogs.model') }}<input v-model="filters.model" class="input mt-1 w-40" /></label>
+          <label class="text-xs text-gray-500">{{ t('bodyLogs.after') }}<input v-model="filters.after" type="datetime-local" class="input mt-1" /></label>
+          <label class="text-xs text-gray-500">{{ t('bodyLogs.until') }}<input v-model="filters.until" type="datetime-local" class="input mt-1" /></label>
+          <label class="text-xs text-gray-500">{{ t('bodyLogs.account') }}<input v-model="filters.account" type="number" min="1" class="input mt-1 w-36" /></label>
+          <label class="text-xs text-gray-500">{{ t('bodyLogs.platform') }}<input v-model="filters.platform" class="input mt-1 w-36" /></label>
+          <label class="flex items-center gap-2 text-sm"><input v-model="allExchanges" type="checkbox" />{{ t('bodyLogs.allExchanges') }}</label>
           <button type="submit" class="btn btn-secondary">{{ t('bodyLogs.apply') }}</button>
           <button type="button" class="px-2 py-2 text-xs text-gray-500 hover:text-primary-600" @click="clear">{{ t('bodyLogs.clear') }}</button>
         </form>
@@ -49,10 +56,10 @@
               <tbody class="divide-y divide-gray-100 dark:divide-dark-800">
                 <tr v-for="row in rows" :key="row.id" class="hover:bg-gray-50/70 dark:hover:bg-dark-900/50">
                   <td class="whitespace-nowrap px-5 py-4 text-xs text-gray-500">{{ new Date(row.created_at).toLocaleString() }}</td>
-                  <td class="max-w-md px-5 py-4"><span class="mr-2 font-mono text-xs font-semibold text-gray-700 dark:text-gray-300">{{ row.method }}</span><span class="break-all font-mono text-xs">{{ row.path }}</span><div class="mt-1 text-xs text-gray-400">{{ row.platform || row.kind }}<span v-if="row.api_key_id"> · Key #{{ row.api_key_id }}</span></div></td>
+                  <td class="max-w-md px-5 py-4"><span class="mr-2 font-mono text-xs font-semibold text-gray-700 dark:text-gray-300">{{ row.method }}</span><span class="break-all font-mono text-xs">{{ row.path }}</span><div class="mt-1 text-xs text-gray-400">{{ row.model || t('bodyLogs.unknown') }} · {{ row.platform || row.kind }}<span v-if="row.api_key_id"> · Key #{{ row.api_key_id }}</span></div></td>
                   <td class="px-5 py-4"><span class="rounded-md px-2 py-1 font-mono text-xs" :class="row.status >= 400 ? 'bg-red-50 text-red-600 dark:bg-red-950/30' : 'bg-gray-100 text-gray-600 dark:bg-dark-800 dark:text-gray-300'">{{ row.status || '—' }}</span></td>
                   <td class="whitespace-nowrap px-5 py-4 font-mono text-xs text-gray-500">{{ bytes(row.bodies.reduce((sum, b) => sum + b.saved_bytes, 0)) }}</td>
-                  <td class="px-5 py-4 text-xs" :class="row.error ? 'text-amber-600' : 'text-gray-500'">{{ state(row.state) }}</td>
+                  <td class="px-5 py-4 text-xs" :class="row.error ? 'text-amber-600' : 'text-gray-500'">{{ row.error === "context canceled" ? t("bodyLogs.connectionClosed") : state(row.state) }}</td>
                   <td class="whitespace-nowrap px-5 py-4"><button type="button" class="text-xs font-medium text-primary-600 hover:underline" @click="select(row)">{{ t('bodyLogs.view') }} <span aria-hidden="true">→</span></button></td>
                 </tr>
               </tbody>
@@ -111,7 +118,8 @@ const saving = ref(false)
 const loading = ref(false)
 const loadError = ref(false)
 const hasMore = ref(false)
-const filters = reactive({ user: '', key: '', status: '' })
+const allExchanges = ref(false)
+const filters = reactive({ user: '', key: '', status: '', request: '', model: '', after: '', until: '', account: '', platform: '', kind: '' })
 let generation = 0
 let settingsGeneration = 0
 function bytes(n: number) { return n >= 1073741824 ? `${(n / 1073741824).toFixed(2)} GiB` : n >= 1048576 ? `${(n / 1048576).toFixed(1)} MiB` : `${(n / 1024).toFixed(1)} KiB` }
@@ -122,7 +130,12 @@ async function load(append: boolean) {
   loading.value = true; loadError.value = false
   try {
     const page = await bodyLogsAPI.list({
-      user_id: filters.user || undefined, api_key_id: filters.key || undefined,
+      roots_only: allExchanges.value ? undefined : "true",
+ account_id: filters.account || undefined, platform: filters.platform || undefined, kind: filters.kind || undefined,
+ request_id: filters.request || undefined, model: filters.model || undefined,
+ after: filters.after ? new Date(filters.after).toISOString() : undefined,
+ until: filters.until ? new Date(filters.until).toISOString() : undefined,
+ user_id: filters.user || undefined, api_key_id: filters.key || undefined,
       status: filters.status || undefined, before: append ? rows.value.at(-1)?.created_at : undefined, limit: 50,
       before_id: append ? rows.value.at(-1)?.id : undefined,
       usage_log_id: route.query.usage ? String(route.query.usage) : undefined
@@ -142,16 +155,34 @@ async function select(record: BodyLogRecord, loadFamily = true) {
   void router.replace({ query: { ...route.query, id: record.id } })
   if (loadFamily) {
     try {
-      const root = record.parent_id ? await bodyLogsAPI.get(record.parent_id) : record
-      const children = await bodyLogsAPI.list({ parent_id: root.id, limit: 100 })
-      const descendants = root.id === record.id ? [] : await bodyLogsAPI.list({ parent_id: record.id, limit: 100 })
-      family.value = [root, ...children.reverse(), ...descendants.reverse()]
-      if (!family.value.some(entry => entry.id === record.id)) family.value.push(record)
+      let root = record
+      const ancestors = new Set<string>([root.id])
+      while (root.parent_id && !ancestors.has(root.parent_id)) {
+        root = await bodyLogsAPI.get(root.parent_id)
+        ancestors.add(root.id)
+      }
+      const found = new Map<string, BodyLogRecord>([[root.id, root]])
+      const pending = [root.id]
+      while (pending.length) {
+        const parent = pending.shift()!
+        let before: string | undefined
+        let beforeId: string | undefined
+        for (;;) {
+          const children = await bodyLogsAPI.list({ parent_id: parent, limit: 100, before, before_id: beforeId })
+          for (const child of children) {
+            if (!found.has(child.id)) { found.set(child.id, child); pending.push(child.id) }
+          }
+          if (children.length < 100) break
+          before = children.at(-1)!.created_at; beforeId = children.at(-1)!.id
+        }
+      }
+      if (selected.value?.id === record.id) family.value = [...found.values()].sort((a, b) => a.created_at.localeCompare(b.created_at))
+
     } catch { family.value = [record] }
   }
 }
 async function back() { selected.value = null; legacy.value = null; await router.replace({ query: {} }); await load(false) }
-function clear() { filters.user = ''; filters.key = ''; filters.status = ''; void load(false) }
+function clear() { Object.assign(filters, { user: '', key: '', status: '', request: '', model: '', after: '', until: '', account: '', platform: '', kind: '' }); void load(false) }
 async function loadSettings() {
   const current = ++settingsGeneration
   try {
@@ -175,8 +206,10 @@ async function save() {
 }
 async function refresh() {
   await loadSettings()
-  if (selected.value) selected.value = await bodyLogsAPI.get(selected.value.id)
-  else await load(false)
+  try {
+    if (selected.value) await select(await bodyLogsAPI.get(selected.value.id))
+    else await load(false)
+  } catch { app.showError(t('bodyLogs.error')) }
 }
 watch(showSettings, value => {
   if (value) {

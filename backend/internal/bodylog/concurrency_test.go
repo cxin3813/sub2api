@@ -102,3 +102,15 @@ func TestArchiveBurstDoesNotCrowdOutDistinctRequests(t *testing.T) {
 	}
 	release.Do(func() { close(index.release) })
 }
+
+func TestLateUsageEnrichmentPersistsWithArchive(t *testing.T) {
+	m := testManager(t, &memoryIndex{})
+	s := m.Begin(nil, "gateway_http", "POST", "/v1/responses")
+	s.End(200, nil)
+	s.LinkUsage(7, func(r *Record) { r.Model = "requested"; r.Metadata["upstream_model"] = "mapped" })
+	m.syncRecord(s.record.ID)
+	row, err := m.Get(t.Context(), s.record.ID)
+	if err != nil || row.Model != "requested" || row.Metadata["upstream_model"] != "mapped" || len(row.UsageIDs) != 1 {
+		t.Fatalf("late metadata lost: %+v %v", row, err)
+	}
+}

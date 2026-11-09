@@ -87,6 +87,11 @@ func ObserveMessage(ctx context.Context, direction string, kind int, payload []b
 	if s == nil {
 		return
 	}
+	s.Update(func(r *Record) {
+		key := direction + "_messages"
+		count, _ := r.Metadata[key].(int)
+		r.Metadata[key] = count + 1
+	})
 	s.messageMu.Lock()
 	if s.messages == nil {
 		s.messages = map[string]*MessageWriter{}

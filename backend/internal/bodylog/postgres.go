@@ -120,6 +120,30 @@ func (p *PostgresIndex) List(ctx context.Context, f Filter) ([]Record, error) {
 		args = append(args, value)
 		query += " AND " + strings.ReplaceAll(clause, "?", "$"+strconv.Itoa(len(args)))
 	}
+	if f.RootsOnly {
+		query += " AND parent_id IS NULL"
+	}
+	if f.AccountID > 0 {
+		add("(value->>'account_id')::bigint = ?", f.AccountID)
+	}
+	if f.Platform != "" {
+		add("value->>'platform' = ?", f.Platform)
+	}
+	if f.Kind != "" {
+		add("value->>'kind' = ?", f.Kind)
+	}
+	if f.Model != "" {
+		add("value->>'model' = ?", f.Model)
+	}
+	if f.RequestID != "" {
+		add("value#>>'{metadata,client_request_id}' = ?", f.RequestID)
+	}
+	if !f.After.IsZero() {
+		add("created_at >= ?", f.After)
+	}
+	if !f.Until.IsZero() {
+		add("created_at <= ?", f.Until)
+	}
 	if !f.Before.IsZero() {
 		if f.BeforeID != "" {
 			args = append(args, f.Before, f.BeforeID)

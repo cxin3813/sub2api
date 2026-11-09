@@ -88,15 +88,23 @@ type Record struct {
 }
 
 type Filter struct {
-	Before   time.Time
-	BeforeID string
-	UserID   int64
-	APIKeyID int64
-	Status   int
-	ParentID string
-	UsageID  int64
-	Limit    int
-	Oldest   bool
+	Before    time.Time
+	BeforeID  string
+	UserID    int64
+	APIKeyID  int64
+	Status    int
+	ParentID  string
+	UsageID   int64
+	Limit     int
+	AccountID int64
+	Platform  string
+	Kind      string
+	RootsOnly bool
+	Model     string
+	RequestID string
+	After     time.Time
+	Until     time.Time
+	Oldest    bool
 }
 
 type Index interface {

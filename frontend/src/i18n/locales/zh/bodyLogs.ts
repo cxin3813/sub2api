@@ -1,4 +1,30 @@
 export default {
+  latestMessage: '定位本页最新消息',
+
+  account: '账号 ID',
+  platform: '平台',
+
+  connectionClosed: '连接已关闭',
+  connectionClosedHint: '请求上下文已取消。请结合下方协议终态和字节采集状态判断是否完整。',
+  wsFirstMessage: '首条 WebSocket 消息未完成',
+
+  noEOF: '未观察到正常字节流结束',
+
+  requestId: '请求 ID',
+  model: '模型',
+  after: '开始时间',
+  until: '结束时间',
+  allExchanges: '显示全部交换',
+  completed: '协议已完成',
+  missing_terminal: '未观察到协议终态',
+  reason_missing_stream_terminal_event: '未观察到协议终止事件，可查看原文。',
+  reason_parse_budget_exceeded: '结构化解析最多读取 32 MiB，完整内容仍可下载。',
+  reason_not_read: '应用没有读取该正文。',
+  reason_truncated: '采集达到配置上限。',
+  reason_unterminated_sse_event: '最后一条 SSE 事件未结束。',
+  reason_event_parse_budget_exceeded: '单条 SSE 事件超过解析预算。',
+  reason_incomplete_message_archive: '消息归档末尾不完整。',
+
   previous: '上一页',
   title: '交互日志', description: '查看网关请求、上游交互与工具调用',
   refresh: '刷新', settings: '采集设置', close: '关闭', save: '保存设置',

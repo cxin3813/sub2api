@@ -1,4 +1,30 @@
 export default {
+  latestMessage: 'Latest loaded message',
+
+  account: 'Account ID',
+  platform: 'Platform',
+
+  connectionClosed: 'Connection closed',
+  connectionClosedHint: 'Request context was canceled. Check protocol completion and byte capture separately below.',
+  wsFirstMessage: 'First WebSocket message was not completed',
+
+  noEOF: 'Normal byte-stream end not observed',
+
+  requestId: 'Request ID',
+  model: 'Model',
+  after: 'From',
+  until: 'Until',
+  allExchanges: 'Show all exchanges',
+  completed: 'Protocol completed',
+  missing_terminal: 'No protocol terminal observed',
+  reason_missing_stream_terminal_event: 'No protocol terminal event observed. Inspect the original body.',
+  reason_parse_budget_exceeded: 'Structured parsing reads up to 32 MiB. The full body remains downloadable.',
+  reason_not_read: 'The application did not read this body.',
+  reason_truncated: 'Capture reached the configured limit.',
+  reason_unterminated_sse_event: 'The final SSE event is unterminated.',
+  reason_event_parse_budget_exceeded: 'An SSE event exceeds the parsing budget.',
+  reason_incomplete_message_archive: 'The message archive has an incomplete tail.',
+
   previous: 'Previous page',
   title: 'Interaction logs', description: 'Inspect gateway requests, upstream exchanges and tool calls',
   refresh: 'Refresh', settings: 'Capture settings', close: 'Close', save: 'Save settings',

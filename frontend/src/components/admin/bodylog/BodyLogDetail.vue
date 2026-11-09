@@ -9,9 +9,10 @@
         </div>
         <p class="mt-2 break-all font-mono text-xs text-gray-400">{{ record.id }} · {{ date(record.created_at) }} · {{ duration }}</p>
       </div>
-      <span class="rounded-full bg-gray-100 px-3 py-1 text-xs dark:bg-dark-800">{{ state(record.state) }}</span>
+      <span class="rounded-full bg-gray-100 px-3 py-1 text-xs dark:bg-dark-800">{{ record.error === "context canceled" ? t("bodyLogs.connectionClosed") : state(record.state) }}</span>
     </div>
-    <div v-if="record.error" class="rounded-lg bg-amber-50 p-3 text-sm text-amber-700 dark:bg-amber-950/20">{{ record.error }}</div>
+    <div v-if="record.error" class="rounded-lg bg-amber-50 p-3 text-sm text-amber-700 dark:bg-amber-950/20">{{ record.error === "context canceled" ? t("bodyLogs.connectionClosedHint") : record.error }}</div>
+    <p v-if="record.metadata?.ws_first_message_error" class="text-sm text-amber-700">{{ t("bodyLogs.wsFirstMessage") }}: {{ record.metadata.ws_first_message_error }}</p>
     <div class="flex flex-wrap items-center gap-2 border-b border-gray-200 pb-3 dark:border-dark-700">
       <button v-for="tab in tabs" :key="tab.key" type="button" class="rounded-lg px-3 py-2 text-sm transition-colors" :class="activeTab === tab.key ? 'bg-primary-50 font-medium text-primary-700 dark:bg-primary-950/30 dark:text-primary-300' : 'text-gray-500 hover:bg-gray-50 dark:hover:bg-dark-800'" @click="activeTab = tab.key">{{ tab.label }}</button>
     </div>
@@ -109,7 +110,7 @@ async function loadRaw(next: boolean, previous?: number) {
   try {
     const page = await bodyLogsAPI.raw(props.record.id, selectedBody.value, offset)
     if (current !== rawGeneration) return
-    if (previous !== undefined) rawHistory.value.pop()
+    if (previous !== undefined) { if (previous !== rawOffset.value) rawHistory.value.pop() }
     else if (next) rawHistory.value.push(rawOffset.value)
     else rawHistory.value = []
     // A page replaces the last page rather than growing a browser-sized copy.
@@ -132,5 +133,8 @@ async function download() {
   } finally { downloading.value = false }
 }
 watch(() => props.record.id, () => { selectedBody.value = props.record.bodies[0]?.id || ''; activeTab.value = 'conversation' }, { immediate: true })
+watch(() => props.record, (record, previous) => {
+ if (record.id === previous.id && activeTab.value === "original") void loadRaw(false, rawOffset.value)
+})
 watch([selectedBody, activeTab], () => { if (activeTab.value === 'original') void loadRaw(false) })
 </script>

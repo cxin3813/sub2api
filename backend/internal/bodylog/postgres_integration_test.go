@@ -75,6 +75,25 @@ INSERT INTO settings(key,value) VALUES('gateway_body_log_enabled','true'),
 ON CONFLICT(usage_log_id) DO NOTHING`, []byte(`{"input":"old"}`), []byte("legacy reply")); err != nil {
 		t.Fatal(err)
 	}
+	for n := 0; n < 4; n++ {
+		id := uuid.NewString()
+		row := Record{ID: id, Kind: "gateway_http", CreatedAt: time.Now().UTC(), Status: 200, Model: "filter-test", Metadata: map[string]any{"client_request_id": "filter-request"}}
+		if n%2 == 1 {
+			row.ParentID = id
+		}
+		if err := index.Put(ctx, row); err != nil {
+			t.Fatal(err)
+		}
+	}
+	filtered, err := index.List(ctx, Filter{RootsOnly: true, Model: "filter-test", RequestID: "filter-request", Limit: 1})
+	if err != nil || len(filtered) != 1 || filtered[0].ParentID != "" {
+		t.Fatalf("root filter must precede pagination: %+v %v", filtered, err)
+	}
+	next, err := index.List(ctx, Filter{RootsOnly: true, Model: "filter-test", RequestID: "filter-request", Before: filtered[0].CreatedAt, BeforeID: filtered[0].ID, Limit: 1})
+	if err != nil || len(next) != 1 || next[0].ID == filtered[0].ID {
+		t.Fatalf("filtered cursor failed: %+v %v", next, err)
+	}
+
 	legacy, err := index.Legacy(ctx, 42)
 	if err != nil || legacy["response_body"] != "legacy reply" {
 		t.Fatalf("legacy body unavailable: %+v %v", legacy, err)

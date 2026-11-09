@@ -109,5 +109,18 @@ func (r *observedUsageLogRepository) link(ctx context.Context, log *service.Usag
 			return
 		}
 	}
-	s.AddUsage(id)
+	s.LinkUsage(id, func(record *bodylog.Record) {
+		record.Model = log.RequestedModel
+		if record.Model == "" {
+			record.Model = log.Model
+		}
+		record.AccountID = log.AccountID
+		if log.Account != nil {
+			record.Platform = log.Account.Platform
+		}
+		record.Metadata["requested_model"] = record.Model
+		if log.UpstreamModel != nil {
+			record.Metadata["upstream_model"] = *log.UpstreamModel
+		}
+	})
 }

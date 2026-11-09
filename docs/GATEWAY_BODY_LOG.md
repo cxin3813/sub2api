@@ -209,3 +209,39 @@ restoration, late usage association, unread/failed requests, EOF/close behavior,
 active previews, crash recovery, capture budget failure, retention/index
 protection, parser/tool semantics, every registered gateway route and socket
 reuse across different users.
+
+## Reading and searching interactions
+
+The interaction list defaults to root client requests. **Show all exchanges**
+also includes upstream attempts and background tasks. Filtering happens before
+cursor pagination, including request ID, model, account, platform and time range.
+The API's existing default remains all exchanges; the page opts into
+`roots_only=true`. Existing API callers retain their previous behavior.
+
+A parsed body's `state` describes semantic parsing, `protocol_state` describes
+observed protocol completion, and `capture_state` preserves the byte observer's
+state. A protocol completion event does not prove transport EOF or remote client
+delivery. The page labels context cancellation as a closed connection rather
+than assuming an application failure. Raw bytes and archive states are unchanged.
+
+Refreshing a detail reloads its relationship tree and current raw page without
+resetting the reader's raw-page history. Related exchanges are traversed through
+all parent levels and paginated per parent. History and large tool results are
+collapsed by default, with navigation to the latest loaded message and roles.
+Loading more semantic items remains explicit.
+
+New usage associations persist the requested model, optional mapped upstream
+model, account and available platform even after capture ends. Child records
+inherit the known platform. No historical production rows are backfilled:
+older missing metadata remains unknown, rather than inferred from body content.
+WebSocket captures record directional message counts and first-message errors.
+These additions do not change routing, billing or socket lifetime.
+
+2026-11-09 validation: Body Log race tests, repository/service/routes Body Log
+checks, isolated PostgreSQL settings/archive/legacy/task and root-filter cursor
+checks passed. Eleven frontend tests including raw refresh, locale checks,
+TypeScript and changed-component lint passed. Local Chromium with sanitized API
+replay verified root-list display, error feedback, refreshed raw content and
+390px layout without overflow or page errors. Production was not modified.
+Capacity forecasting and historical metadata backfill are not included in this
+patch; retention remains an age ceiling constrained by the file budget.
