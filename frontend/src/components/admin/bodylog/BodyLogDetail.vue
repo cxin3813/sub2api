@@ -13,6 +13,11 @@
     </div>
     <div v-if="record.error" class="rounded-lg bg-amber-50 p-3 text-sm text-amber-700 dark:bg-amber-950/20">{{ record.error === "context canceled" ? t("bodyLogs.connectionClosedHint") : record.error }}</div>
     <p v-if="record.metadata?.ws_first_message_error" class="text-sm text-amber-700">{{ t("bodyLogs.wsFirstMessage") }}: {{ record.metadata.ws_first_message_error }}</p>
+    <div class="grid gap-2 rounded-xl border border-gray-100 bg-gray-50/70 p-3 text-xs dark:border-dark-800 dark:bg-dark-900/40 sm:grid-cols-3">
+      <div><span class="text-gray-400">{{ t('bodyLogs.connection') }}</span><p class="mt-1 font-medium">{{ connectionLabel }}</p></div>
+      <div><span class="text-gray-400">{{ t('bodyLogs.interaction') }}</span><p class="mt-1 font-medium">{{ interactionLabel }}</p></div>
+      <div><span class="text-gray-400">{{ t('bodyLogs.savedBody') }}</span><p class="mt-1 font-medium">{{ savedBytes }}</p></div>
+    </div>
     <div class="flex flex-wrap items-center gap-2 border-b border-gray-200 pb-3 dark:border-dark-700">
       <button v-for="tab in tabs" :key="tab.key" type="button" class="rounded-lg px-3 py-2 text-sm transition-colors" :class="activeTab === tab.key ? 'bg-primary-50 font-medium text-primary-700 dark:bg-primary-950/30 dark:text-primary-300' : 'text-gray-500 hover:bg-gray-50 dark:hover:bg-dark-800'" @click="activeTab = tab.key">{{ tab.label }}</button>
     </div>
@@ -92,6 +97,15 @@ const recordMetadata = computed(() => {
   const { bodies: _bodies, ...rest } = props.record
   return rest
 })
+const connectionLabel = computed(() => {
+  const key = props.record.connection_state === 'first_message_timeout' ? 'firstMessageTimeout' : props.record.connection_state === 'closed' ? 'connectionClosed' : props.record.connection_state || 'unknown'
+  return te(`bodyLogs.${key}`) ? t(`bodyLogs.${key}`) : key
+})
+const interactionLabel = computed(() => {
+  const key = props.record.interaction_state === 'not_started' ? 'notStarted' : props.record.interaction_state === 'completed' ? 'interactionCompleted' : props.record.interaction_state || 'unknown'
+  return te(`bodyLogs.${key}`) ? t(`bodyLogs.${key}`) : key
+})
+const savedBytes = computed(() => bytes(props.record.bodies.reduce((sum, body) => sum + body.saved_bytes, 0)))
 const duration = computed(() => props.record.ended_at ? `${Math.max(0, Date.parse(props.record.ended_at) - Date.parse(props.record.created_at)).toLocaleString()} ms` : t('bodyLogs.open'))
 function format(value: unknown) { return value == null ? t('bodyLogs.unknown') : typeof value === 'string' ? value : JSON.stringify(value, null, 2) }
 function date(value: string) { return new Date(value).toLocaleString() }

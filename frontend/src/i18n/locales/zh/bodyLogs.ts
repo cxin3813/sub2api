@@ -1,4 +1,11 @@
 export default {
+  connection: '连接',
+  interaction: '交互',
+  savedBody: '已保存正文',
+  interactionCompleted: '交互已完成',
+  firstMessageTimeout: '首帧超时',
+  notStarted: '交互未开始',
+
   latestMessage: '定位本页最新消息',
 
   account: '账号 ID',

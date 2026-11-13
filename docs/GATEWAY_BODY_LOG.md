@@ -273,3 +273,13 @@ test passed (0.034 seconds total), consistent with a scheduling-sensitive
 timeout under concurrent builds; its implementation and assertion were not
 changed. This is not recorded as an entirely green full-suite run.
 No production container or database was upgraded in this sync.
+
+## WebSocket status labels
+
+WebSocket records now expose `connection_state` and `interaction_state` separately.
+A `101` handshake is not a business result. A record with `first_message_timeout`
+means the socket upgraded but no first client message arrived before the configured
+wait; `not_started` means no interaction began. A record with `closed` and
+`completed` indicates that messages were exchanged and the connection later ended.
+The existing record `state`, body states, raw downloads and archive format remain
+unchanged.

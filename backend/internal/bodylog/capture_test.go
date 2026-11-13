@@ -494,3 +494,14 @@ func TestReducingBudgetBelowCurrentUsageStillCleansCompletedLogs(t *testing.T) {
 		t.Fatalf("reduced budget prevented its own cleanup: state=%s reason=%s used=%d err=%v", row.State, row.Error, m.used.Load(), err)
 	}
 }
+
+func TestWebSocketStatusSeparatesConnectionAndInteraction(t *testing.T) {
+	m := testManager(t, nil)
+	s := m.Begin(nil, "gateway_http", "GET", "/v1/responses")
+	s.Update(func(r *Record) { r.Metadata["ws_first_message_error"] = "timeout" })
+	s.End(101, context.Canceled)
+	r := s.Snapshot()
+	if r.ConnectionState != "first_message_timeout" || r.InteractionState != "not_started" {
+		t.Fatalf("unexpected WebSocket state: %+v", r)
+	}
+}

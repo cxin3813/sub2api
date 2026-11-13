@@ -34,6 +34,8 @@ export interface BodyLogRecord {
   path: string
   route?: string
   status: number
+  connection_state?: string
+  interaction_state?: string
   user_id?: number
   api_key_id?: number
   account_id?: number

@@ -25,7 +25,7 @@
         <button type="button" class="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-primary-600" @click="back"><span aria-hidden="true">←</span>{{ t('bodyLogs.back') }}</button>
         <div class="flex flex-wrap items-center gap-2">
           <span class="mr-1 text-xs text-gray-400">{{ t('bodyLogs.attempts') }}</span>
-          <button v-for="entry in family" :key="entry.id" type="button" class="rounded-lg border px-3 py-1.5 text-xs" :class="selected.id === entry.id ? 'border-primary-300 bg-primary-50 text-primary-700 dark:border-primary-800 dark:bg-primary-950/30 dark:text-primary-300' : 'border-gray-200 text-gray-500 dark:border-dark-700'" @click="select(entry)">{{ entry.kind === 'gateway_http' ? t('bodyLogs.client') : `${entry.method} ${entry.account_id ? '#' + entry.account_id : ''}` }} · {{ entry.status || (entry.error === "context canceled" ? t("bodyLogs.connectionClosed") : state(entry.state)) }}</button>
+          <button v-for="entry in family" :key="entry.id" type="button" class="rounded-lg border px-3 py-1.5 text-xs" :class="selected.id === entry.id ? 'border-primary-300 bg-primary-50 text-primary-700 dark:border-primary-800 dark:bg-primary-950/30 dark:text-primary-300' : 'border-gray-200 text-gray-500 dark:border-dark-700'" @click="select(entry)">{{ entry.kind === 'gateway_http' ? t('bodyLogs.client') : `${entry.method} ${entry.account_id ? '#' + entry.account_id : ''}` }} · {{ entry.status || connectionLabel(entry) }}</button>
         </div>
         <div class="card p-5 md:p-7"><BodyLogDetail :record="selected" /></div>
       </div>
@@ -59,7 +59,7 @@
                   <td class="max-w-md px-5 py-4"><span class="mr-2 font-mono text-xs font-semibold text-gray-700 dark:text-gray-300">{{ row.method }}</span><span class="break-all font-mono text-xs">{{ row.path }}</span><div class="mt-1 text-xs text-gray-400">{{ row.model || t('bodyLogs.unknown') }} · {{ row.platform || row.kind }}<span v-if="row.api_key_id"> · Key #{{ row.api_key_id }}</span></div></td>
                   <td class="px-5 py-4"><span class="rounded-md px-2 py-1 font-mono text-xs" :class="row.status >= 400 ? 'bg-red-50 text-red-600 dark:bg-red-950/30' : 'bg-gray-100 text-gray-600 dark:bg-dark-800 dark:text-gray-300'">{{ row.status || '—' }}</span></td>
                   <td class="whitespace-nowrap px-5 py-4 font-mono text-xs text-gray-500">{{ bytes(row.bodies.reduce((sum, b) => sum + b.saved_bytes, 0)) }}</td>
-                  <td class="px-5 py-4 text-xs" :class="row.error ? 'text-amber-600' : 'text-gray-500'">{{ row.error === "context canceled" ? t("bodyLogs.connectionClosed") : state(row.state) }}</td>
+                  <td class="px-5 py-4 text-xs" :class="row.error ? 'text-amber-600' : 'text-gray-500'">{{ connectionLabel(row) }}</td>
                   <td class="whitespace-nowrap px-5 py-4"><button type="button" class="text-xs font-medium text-primary-600 hover:underline" @click="select(row)">{{ t('bodyLogs.view') }} <span aria-hidden="true">→</span></button></td>
                 </tr>
               </tbody>
@@ -124,6 +124,12 @@ let generation = 0
 let settingsGeneration = 0
 function bytes(n: number) { return n >= 1073741824 ? `${(n / 1073741824).toFixed(2)} GiB` : n >= 1048576 ? `${(n / 1048576).toFixed(1)} MiB` : `${(n / 1024).toFixed(1)} KiB` }
 function state(value: string) { return te(`bodyLogs.${value}`) ? t(`bodyLogs.${value}`) : value }
+function connectionLabel(row: BodyLogRecord) {
+  if (row.connection_state === 'first_message_timeout') return t('bodyLogs.firstMessageTimeout')
+  if (row.connection_state === 'closed') return t('bodyLogs.connectionClosed')
+  if (row.interaction_state === 'not_started') return t('bodyLogs.notStarted')
+  return state(row.state)
+}
 function format(value: unknown) { return JSON.stringify(value, null, 2) }
 async function load(append: boolean) {
   const current = ++generation

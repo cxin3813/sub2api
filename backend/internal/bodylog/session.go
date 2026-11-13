@@ -207,6 +207,18 @@ func (s *Session) End(status int, err error) {
 	now := time.Now().UTC()
 	s.Update(func(r *Record) {
 		r.Status, r.EndedAt, r.State = status, &now, "closed"
+		if status == 101 {
+			r.ConnectionState = "closed"
+			if firstError, ok := r.Metadata["ws_first_message_error"].(string); ok && firstError != "" {
+				r.ConnectionState, r.InteractionState = "first_message_timeout", "not_started"
+			} else if count, ok := r.Metadata["client_request_messages"].(int); ok && count > 0 {
+				r.InteractionState = "completed"
+			} else {
+				r.InteractionState = "not_started"
+			}
+		} else {
+			r.ConnectionState, r.InteractionState = "not_applicable", "completed"
+		}
 		if err != nil {
 			r.Error, r.State = err.Error(), "interrupted"
 		}

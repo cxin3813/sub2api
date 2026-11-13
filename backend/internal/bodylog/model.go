@@ -63,28 +63,30 @@ type Body struct {
 }
 
 type Record struct {
-	Revision    int64          `json:"revision"`
-	ID          string         `json:"id"`
-	ParentID    string         `json:"parent_id,omitempty"`
-	Kind        string         `json:"kind"`
-	CreatedAt   time.Time      `json:"created_at"`
-	EndedAt     *time.Time     `json:"ended_at,omitempty"`
-	Method      string         `json:"method"`
-	Path        string         `json:"path"`
-	Route       string         `json:"route,omitempty"`
-	Status      int            `json:"status"`
-	UserID      int64          `json:"user_id,omitempty"`
-	APIKeyID    int64          `json:"api_key_id,omitempty"`
-	AccountID   int64          `json:"account_id,omitempty"`
-	GroupID     *int64         `json:"group_id,omitempty"`
-	UsageIDs    []int64        `json:"usage_log_ids,omitempty"`
-	Model       string         `json:"model,omitempty"`
-	Platform    string         `json:"platform,omitempty"`
-	State       string         `json:"state"`
-	Persistence string         `json:"persistence"`
-	Error       string         `json:"error,omitempty"`
-	Metadata    map[string]any `json:"metadata,omitempty"`
-	Bodies      []Body         `json:"bodies"`
+	Revision         int64          `json:"revision"`
+	ID               string         `json:"id"`
+	ParentID         string         `json:"parent_id,omitempty"`
+	Kind             string         `json:"kind"`
+	CreatedAt        time.Time      `json:"created_at"`
+	EndedAt          *time.Time     `json:"ended_at,omitempty"`
+	Method           string         `json:"method"`
+	Path             string         `json:"path"`
+	Route            string         `json:"route,omitempty"`
+	Status           int            `json:"status"`
+	ConnectionState  string         `json:"connection_state,omitempty"`
+	InteractionState string         `json:"interaction_state,omitempty"`
+	UserID           int64          `json:"user_id,omitempty"`
+	APIKeyID         int64          `json:"api_key_id,omitempty"`
+	AccountID        int64          `json:"account_id,omitempty"`
+	GroupID          *int64         `json:"group_id,omitempty"`
+	UsageIDs         []int64        `json:"usage_log_ids,omitempty"`
+	Model            string         `json:"model,omitempty"`
+	Platform         string         `json:"platform,omitempty"`
+	State            string         `json:"state"`
+	Persistence      string         `json:"persistence"`
+	Error            string         `json:"error,omitempty"`
+	Metadata         map[string]any `json:"metadata,omitempty"`
+	Bodies           []Body         `json:"bodies"`
 }
 
 type Filter struct {

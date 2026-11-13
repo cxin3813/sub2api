@@ -1,4 +1,11 @@
 export default {
+  connection: 'Connection',
+  interaction: 'Interaction',
+  savedBody: 'Saved body',
+  interactionCompleted: 'Interaction completed',
+  firstMessageTimeout: 'First-message timeout',
+  notStarted: 'Interaction not started',
+
   latestMessage: 'Latest loaded message',
 
   account: 'Account ID',
