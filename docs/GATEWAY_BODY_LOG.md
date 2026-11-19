@@ -283,3 +283,27 @@ wait; `not_started` means no interaction began. A record with `closed` and
 `completed` indicates that messages were exchanged and the connection later ended.
 The existing record `state`, body states, raw downloads and archive format remain
 unchanged.
+
+## Upstream 0.2.23 integration (2026-11-19)
+
+The fork merges upstream main `2af3f1e15` (0.2.23), retaining Body Log and its
+latest status UI. The sole textual conflict was Wire's generated cleanup call;
+Wire was regenerated with the upstream usage billing combiner and the Body Log
+manager both present. HTTP clients, async scopes and WebSocket lease observers
+remain connected. Go and all upstream Docker builders now require 1.27.4.
+
+The backend unit suite passed with the known external Aliyun CAPTCHA tests
+excluded. Full Body Log race and the pooled-socket lease race test passed.
+The frontend full run passed 3,154 tests; one upstream localization assertion
+still expected an internal service-tier literal removed from the user-facing
+copy. The assertion now checks the current Ultra Fast label while retaining its
+model-name checks. That file and Body Log/locale regressions passed (15 tests),
+as did TypeScript, changed-test lint and the frontend production build.
+
+An empty isolated PostgreSQL database applied the previous fork's migration set,
+then upgraded from 304 to 307 ledger rows. Legacy BYTEA content, imported capture
+switches, new file archives and repeated startup remained valid. New Ultrafast
+and rollup fields/defaults were checked explicitly. No historical migration file
+was rewritten for this release. Deployment recovery uses a retained application
+image, a full schema snapshot, affected-table data and configuration snapshots;
+these targeted snapshots are not a full current database/body backup.
